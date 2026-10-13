@@ -1,0 +1,1664 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script src="vendor/supabase.js"></script>
+<script src="config.js"></script>
+<script src="booklog-supabase.js"></script>
+</head>
+<body>
+<title>먼슬리 북로그</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* Layout: an index catalogue. Thin black rules frame a metadata bar; the month is a numbered 7-column index of covers;
+   the shelf view stands every finished book as a flat-colour spine, as thick as its page count, one shelf per month. */
+:root {
+  --bg: #F0F0EF;
+  --ink: #111111;
+  --muted: #727272;
+  --soft: #D9D9D7;
+  --hover: #E4E4E2;
+  --surface: #FFFFFF;
+  --red: #E5332A;
+  --star: #E5332A;
+  --shelf-h: 300px;
+  --f: "Helvetica Neue", Helvetica, Arial, "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141414; --ink: #EDEDED; --muted: #9A9A9A; --soft: #2E2E2E; --hover: #222222;
+    --surface: #1D1D1D; --red: #FF5B4F; --star: #FF5B4F; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141414; --ink: #EDEDED; --muted: #9A9A9A; --soft: #2E2E2E; --hover: #222222;
+  --surface: #1D1D1D; --red: #FF5B4F; --star: #FF5B4F; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--f); font-size: 14px; line-height: 1.5;
+  padding-inline: 16px; padding-block: 20px 120px;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.num-t { font-variant-numeric: tabular-nums; }
+
+.page { display: grid; gap: 18px; }
+
+/* ── Metadata bar and footer, like a catalogue's running head ── */
+.bar {
+  display: grid; grid-template-columns: 1.2fr 1fr 1.4fr auto; gap: 12px; align-items: baseline;
+  font-size: 12px; padding-bottom: 6px; border-bottom: 1px solid var(--ink);
+}
+.bar span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar .act { font-size: 12px; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.bar .act:hover { color: var(--red); }
+.bar .act:disabled { opacity: .5; cursor: progress; }
+.foot {
+  display: grid; grid-template-columns: 1fr auto; gap: 12px;
+  font-size: 12px; padding-top: 6px; border-top: 1px solid var(--ink);
+}
+.foot span:last-child { text-align: right; }
+
+.titlerow { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.titlerow h1 {
+  margin: 0; font-size: clamp(44px, 11vw, 76px); font-weight: 500; line-height: .9; letter-spacing: -0.03em;
+}
+.titlerow .sub { font-size: 13px; color: var(--muted); }
+.nav { display: flex; gap: 2px; align-items: center; }
+.nav button { height: 30px; min-width: 30px; padding-inline: 8px; font-size: 13px; }
+.nav button:hover { color: var(--red); }
+.nav .arrow { font-size: 18px; }
+.side { align-self: stretch; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; gap: 8px; }
+.side .nav { margin-right: -8px; margin-bottom: -6px; }
+.print { font-size: 12px; line-height: 1; padding-top: 2px; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.print:hover { color: var(--red); }
+.print:disabled { opacity: .5; cursor: progress; }
+
+/* ── Month index ── */
+.weekdays, .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); column-gap: 8px; }
+.weekdays span { font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+.weekdays span:first-child { color: var(--red); }
+.grid { row-gap: 14px; }
+.day { display: grid; gap: 5px; align-content: start; min-width: 0; }
+.day.pad { visibility: hidden; }
+.day .n {
+  font-size: 17px; font-weight: 500; line-height: 1; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums; justify-self: start; padding: 2px 3px 2px 0;
+}
+.day.sun .n { color: var(--red); }
+.day.today .n { background: var(--ink); color: var(--bg); padding: 2px 4px; }
+.slot { position: relative; aspect-ratio: 2 / 3; max-width: 100%; overflow: hidden; }
+.slot .add { position: absolute; inset: 0; width: 100%; transition: background .12s; border-top: 1px solid var(--soft); }
+.slot .add:not(.static):hover { background: var(--hover); }
+.slot .add::after {
+  content: "+"; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  font-size: 18px; color: var(--muted); opacity: 0; transition: opacity .12s;
+}
+.slot .add:not(.static):hover::after, .slot .add:focus-visible::after { opacity: 1; }
+.covers { position: absolute; inset: 0; display: flex; gap: 2px; }
+.cover-btn { flex: 1; min-width: 0; height: 100%; overflow: hidden; }
+.cover-btn img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .2s; }
+.cover-btn:hover img { transform: scale(1.04); }
+.cover-btn .plain {
+  width: 100%; height: 100%; display: flex; align-items: flex-end; padding: 5px;
+  background: var(--ink); color: var(--bg); font-size: 11px; font-weight: 500; line-height: 1.25;
+  text-align: left; overflow: hidden; word-break: keep-all; overflow-wrap: anywhere;
+}
+.more {
+  position: absolute; right: 3px; bottom: 3px; pointer-events: none;
+  background: var(--red); color: #fff; font-size: 10px; line-height: 1; padding: 3px 4px;
+}
+.hint { font-size: 12px; color: var(--muted); margin: 0; }
+
+/* ── Shelf view ── */
+.shelves { display: grid; gap: 34px; }
+.shelf { display: grid; gap: 10px; }
+.shelf-head { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding-bottom: 6px; border-bottom: 1px solid var(--soft); }
+.shelf-head b { font-weight: 500; }
+.row { display: flex; flex-wrap: wrap; align-items: flex-end; row-gap: 18px; min-height: var(--shelf-h); }
+.spine {
+  height: calc(var(--shelf-h) * var(--k, 1)); flex: none;
+  writing-mode: vertical-rl; text-orientation: sideways;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 0; overflow: hidden; white-space: nowrap;
+  transition: transform .18s ease;
+}
+.spine:hover, .spine:focus-visible { transform: translateY(-8px); }
+.spine .t, .spine .a { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.2; }
+.spine .t { font-weight: 500; letter-spacing: -0.01em; max-inline-size: 72%; }
+.spine .a { font-size: 10px; opacity: .85; max-inline-size: 26%; }
+.spine.thin .a { display: none; }
+.spine.thin .t { max-inline-size: 100%; }
+.empty { font-size: 13px; color: var(--muted); padding-block: 40px; border-top: 1px solid var(--soft); margin: 0; }
+
+.notice { margin: 0; padding: 12px 14px; border: 1px solid var(--ink); font-size: 13px; line-height: 1.6; }
+
+/* ── Friends: round profile pictures on a dark tray ── */
+.people {
+  display: flex; flex-wrap: wrap; gap: 18px 14px; justify-content: center;
+  background: #1C1C1C; color: #EDEDED; border-radius: 28px; padding: 18px 20px 14px;
+}
+.person { display: grid; justify-items: center; gap: 6px; width: 72px; }
+.person .ring { width: 64px; height: 64px; border-radius: 50%; overflow: hidden; background: #2E2E2E; display: grid; place-items: center; transition: transform .15s; }
+.person:hover .ring { transform: scale(1.06); }
+.person .ring img { width: 100%; height: 100%; object-fit: cover; }
+.person .initial { font-size: 22px; font-weight: 500; color: #EDEDED; }
+.people { padding: 16px 20px; }
+.person .label { font-size: 11px; line-height: 1.2; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.person.me .label { opacity: .6; }
+.friend-head { display: flex; align-items: center; gap: 14px; }
+.friend-head .ring { width: 56px; height: 56px; border-radius: 50%; overflow: hidden; background: var(--soft); flex: none; display: grid; place-items: center; }
+.friend-head .ring img { width: 100%; height: 100%; object-fit: cover; }
+.friend-head .initial { font-size: 22px; font-weight: 500; color: var(--ink); }
+.tabs { display: flex; gap: 14px; font-size: 13px; }
+.tabs button { color: var(--muted); padding: 2px 0; }
+.tabs button[aria-pressed="true"] { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
+.static { cursor: default; }
+.spine.static:hover { transform: none; }
+
+/* Join */
+.join { display: grid; gap: 18px; justify-items: center; text-align: center; padding: 28px 24px 22px; }
+.join h2 { margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -0.02em; }
+.join p { margin: 0; font-size: 13px; color: var(--muted); }
+.avatar-pick {
+  width: 112px; height: 112px; border-radius: 50%; overflow: hidden; position: relative;
+  border: 1px dashed var(--muted); display: grid; place-items: center; color: var(--muted); font-size: 12px; background: var(--bg);
+}
+.avatar-pick.filled { border: 0; }
+.avatar-pick img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.join .field { width: min(260px, 100%); }
+.join .field input { text-align: center; font-size: 16px; }
+.join .primary {
+  background: var(--ink); color: var(--surface); padding: 10px 26px; border-radius: 999px; font-size: 14px; font-weight: 500;
+}
+.join .primary:disabled { opacity: .35; cursor: not-allowed; }
+.back { font-size: 13px; justify-self: start; padding: 4px 0; }
+.back:hover { color: var(--red); }
+.friend-name { font-size: clamp(32px, 8vw, 52px); font-weight: 500; letter-spacing: -0.03em; line-height: 1; margin: 0; }
+.readonly .cover-pick { cursor: default; }
+.readonly .cover-pick .swap, .readonly #add-quote, .readonly .q-del { display: none; }
+.readonly .stars button { cursor: default; }
+.readonly .stars button:hover { transform: none; }
+.readonly .field input, .readonly .field textarea { border-bottom-color: transparent; }
+.readonly .field input::placeholder, .readonly .field textarea::placeholder { opacity: 0; }
+
+/* ── View switch, floating bottom centre ── */
+.switch {
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 10;
+  bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+  display: flex; background: var(--ink); padding: 3px; border-radius: 999px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .18);
+}
+.switch button {
+  color: var(--bg); font-size: 13px; font-weight: 500; padding: 8px 18px; border-radius: 999px;
+  transition: background .15s, color .15s; white-space: nowrap;
+}
+.switch button[aria-pressed="true"] { background: var(--bg); color: var(--ink); }
+/* Friends button = who is here now, overlapped like a design tool's live viewers */
+.switch .presence { display: flex; align-items: center; padding: 4px 8px 4px 12px; }
+.switch .presence[aria-pressed="true"] { background: var(--bg); }
+.presence .av { position: relative; flex: none; margin-left: -10px; }
+.presence .av:first-child { margin-left: 0; }
+.presence .face {
+  width: 30px; height: 30px; border-radius: 50%; overflow: hidden;
+  border: 2px solid var(--ink); background: #3A3A3A;
+  display: grid; place-items: center; font-size: 12px; font-weight: 500; color: #EDEDED;
+}
+.presence[aria-pressed="true"] .face { border-color: var(--bg); }
+.presence .face img { width: 100%; height: 100%; object-fit: cover; }
+/* Opened: the switch becomes a people picker, a line under whoever's shelf is showing */
+.presence.open { gap: 10px; padding: 4px 12px; }
+.presence.open .av { margin-left: 0; cursor: pointer; }
+.presence .av::before {
+  content: ""; position: absolute; inset: -3px; border-radius: 50%;
+  border: 1.5px solid var(--bg); opacity: 0; transition: opacity .15s; pointer-events: none;
+}
+.presence .av.on::before { opacity: 1; }
+.presence.open .av:not(.on) .face { opacity: .55; }
+.presence.open .av:hover .face { opacity: 1; }
+
+/* Hovering my face offers the profile page */
+.presence .pcard {
+  position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%); padding-bottom: 10px;
+  opacity: 0; pointer-events: none; transition: opacity .12s; z-index: 20;
+}
+.presence .pcard span {
+  display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer;
+  background: #111; color: #fff; font-size: 12px; font-weight: 500; line-height: 1; padding: 7px 12px; border-radius: 999px;
+}
+.presence .pcard span:hover { background: var(--red); }
+.presence .av.mine:hover .pcard { opacity: 1; pointer-events: auto; }
+
+/* Profile page: picture, name, every sentence I kept */
+.profile-head { display: flex; align-items: center; gap: 18px; }
+.profile-head .avatar-pick { width: 96px; height: 96px; flex: none; }
+.profile-head .avatar-pick .swap {
+  position: absolute; inset: auto 0 0 0; padding: 4px 0 8px; font-size: 11px; color: #fff;
+  background: linear-gradient(transparent, rgba(0,0,0,.55)); opacity: 0; transition: opacity .12s;
+}
+.profile-head .avatar-pick:hover .swap { opacity: 1; }
+.profile-head .nick {
+  flex: 1; min-width: 0; width: 0; font: inherit; font-size: clamp(32px, 8vw, 56px); font-weight: 500; letter-spacing: -0.03em; line-height: 1.1;
+  color: var(--ink); background: none; border: 0; border-bottom: 1px solid transparent; padding: 0; border-radius: 0;
+}
+.profile-head .nick:hover, .profile-head .nick:focus { border-bottom-color: var(--soft); outline: none; }
+.p-out { flex: none; align-self: flex-start; font-size: 12px; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+.p-out:hover { color: var(--red); }
+.profile-meta { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding-bottom: 6px; border-bottom: 1px solid var(--ink); }
+.profile-meta .status { color: var(--muted); }
+.sentences { display: grid; }
+.sentence { display: grid; gap: 8px; text-align: left; padding: 18px 0; border-bottom: 1px solid var(--soft); }
+.sentence:not(:disabled):hover .q { color: var(--red); }
+.sentence:disabled { cursor: default; color: inherit; }
+.theirs .avatar-pick { cursor: default; border: 0; }
+.avatar-pick.blank { background: var(--soft); }
+.avatar-pick .initial { font-size: 36px; font-weight: 500; color: var(--ink); }
+.theirs .nick:hover { border-bottom-color: transparent; }
+.sentence .q { font-size: 17px; line-height: 1.6; white-space: pre-wrap; transition: color .12s; }
+.sentence .m { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.sentence .m b { font-weight: 500; color: var(--ink); }
+
+/* First-run guide: a spotlight on one thing at a time, with a short card beside it */
+.guide { position: fixed; inset: 0; z-index: 50; }
+.guide .hole {
+  position: fixed; border-radius: 6px; box-shadow: 0 0 0 9999px rgba(10, 10, 10, .55);
+  transition: left .25s, top .25s, width .25s, height .25s, border-radius .25s; pointer-events: none;
+}
+.guide .card {
+  position: fixed; left: 50%; transform: translateX(-50%); width: min(320px, calc(100% - 32px));
+  background: var(--surface); color: var(--ink); padding: 18px 18px 14px; display: grid; gap: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .25);
+}
+.guide .card h3 { margin: 0; font-size: 16px; font-weight: 500; letter-spacing: -0.01em; }
+.guide .card p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--muted); }
+.guide .g-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.guide .step { color: var(--muted); font-variant-numeric: tabular-nums; }
+.guide .g-row div { display: flex; gap: 6px; }
+.guide .skip { color: var(--muted); padding: 6px 8px; }
+.guide .next { background: var(--ink); color: var(--surface); padding: 6px 16px; border-radius: 999px; font-weight: 500; }
+
+/* Name on hover */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%);
+  background: #111; color: #fff; font-size: 11px; font-weight: 500; line-height: 1; white-space: nowrap;
+  padding: 5px 8px; border-radius: 999px; pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 5;
+}
+[data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; }
+.people [data-tip]::after { background: #EDEDED; color: #111; top: calc(100% + 6px); bottom: auto; }
+
+/* ── Book sheet ── */
+dialog:focus { outline: none; }
+dialog {
+  border: 0; padding: 0; background: var(--surface); color: var(--ink);
+  width: min(600px, calc(100% - 32px)); max-height: calc(100% - 48px);
+  border-radius: 0; box-shadow: 0 24px 70px rgba(0, 0, 0, .28);
+}
+dialog::backdrop { background: rgba(10, 10, 10, .45); }
+.sheet { display: grid; gap: 22px; padding: 18px 24px; }
+.sheet-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--ink); }
+.sheet-top input[type="date"] {
+  font: inherit; font-size: 12px; color: var(--ink); background: transparent; border: 0; padding: 2px 0;
+  font-variant-numeric: tabular-nums;
+}
+.close { width: 28px; height: 28px; font-size: 20px; line-height: 1; display: grid; place-items: center; }
+.close:hover { color: var(--red); }
+
+.book { display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 20px; align-items: start; }
+.cover-pick {
+  position: relative; width: 100%; aspect-ratio: 2 / 3; overflow: hidden;
+  background: var(--bg); border: 1px dashed var(--muted); display: grid; place-items: center;
+  color: var(--muted); font-size: 12px; text-align: center; line-height: 1.5;
+}
+.cover-pick.filled { border: 0; }
+.cover-pick img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cover-pick.drag { border-color: var(--red); color: var(--red); }
+.cover-pick .swap {
+  position: absolute; inset: auto 0 0 0; padding: 6px; font-size: 11px;
+  background: rgba(0, 0, 0, .6); color: #fff; opacity: 0; transition: opacity .15s;
+}
+.cover-pick.filled:hover .swap, .cover-pick.filled:focus-visible .swap { opacity: 1; }
+
+.meta { display: grid; gap: 4px; min-width: 0; }
+.field input, .field textarea {
+  width: 100%; font: inherit; color: var(--ink); background: transparent;
+  border: 0; border-bottom: 1px solid var(--soft); border-radius: 0; padding: 6px 0;
+}
+.field input:focus, .field textarea:focus { outline: none; border-bottom-color: var(--ink); }
+.field input::placeholder, .field textarea::placeholder { color: var(--muted); opacity: .75; }
+#f-title { font-size: 21px; font-weight: 700; line-height: 1.3; letter-spacing: -0.02em; }
+#f-author, #f-publisher { font-size: 14px; }
+.pages-field { display: flex; align-items: baseline; gap: 6px; }
+.pages-field input { width: 90px; font-variant-numeric: tabular-nums; }
+.pages-field span { font-size: 13px; color: var(--muted); }
+.stars { display: flex; gap: 2px; margin-top: 8px; }
+.stars button { font-size: 21px; line-height: 1; color: var(--soft); padding: 2px; transition: color .1s, transform .1s; }
+.stars button.on { color: var(--star); }
+.stars button:hover { transform: scale(1.12); }
+
+.notes { display: grid; gap: 18px; }
+/* Book or diary: one sheet, two sets of fields */
+.sheet-top { gap: 12px; }
+.kind { display: flex; gap: 2px; margin-left: auto; background: var(--bg); border-radius: 999px; padding: 2px; }
+.kind button { font-size: 12px; padding: 4px 12px; border-radius: 999px; color: var(--muted); }
+.kind button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.readonly .kind button[aria-pressed="false"] { display: none; }
+.diary-note { display: none; }
+.diary-note label { display: block; font-size: 11px; color: var(--muted); letter-spacing: .04em; margin-bottom: 2px; }
+#f-text { font-size: 15px; line-height: 1.7; }
+.sheet.is-diary .meta, .sheet.is-diary .notes { display: none; }
+.sheet.is-diary .diary-note { display: block; }
+.cover-btn .plain.note { background: var(--surface); color: var(--ink); border: 1px solid var(--soft); align-items: flex-start; font-weight: 400; }
+.notes label, .label-row .lbl { display: block; font-size: 11px; color: var(--muted); letter-spacing: .04em; margin-bottom: 2px; }
+.notes textarea { resize: none; min-height: 2.4em; line-height: 1.7; overflow: hidden; }
+.label-row { display: flex; align-items: center; justify-content: space-between; }
+.add-quote {
+  width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  border: 1px solid var(--ink); font-size: 14px; line-height: 1;
+}
+.add-quote:hover { background: var(--ink); color: var(--surface); }
+.quote-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) 22px; gap: 10px; align-items: start; }
+.quote-row .q-page { font-size: 13px; color: var(--red); font-variant-numeric: tabular-nums; }
+.quote-row .q-del { color: var(--muted); font-size: 16px; padding-top: 6px; opacity: .6; }
+.quote-row .q-del:hover { opacity: 1; color: var(--red); }
+
+.sheet-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 30px; padding-top: 8px; border-top: 1px solid var(--soft); }
+.status { font-size: 12px; color: var(--muted); }
+.status.err { color: var(--red); }
+.foot-actions { display: flex; gap: 14px; align-items: center; }
+.link { font-size: 12px; color: var(--muted); padding: 4px 0; }
+.link:hover { color: var(--ink); }
+.link.danger:hover, .link.danger.armed { color: var(--red); }
+
+#export { width: min(640px, calc(100% - 32px)); }
+#join { width: min(380px, calc(100% - 32px)); height: fit-content; max-height: calc(100% - 48px); margin: auto; }
+.export-view { display: grid; gap: 10px; justify-items: center; }
+.export-view img { max-width: 100%; border: 1px solid var(--soft); }
+.export-view p { font-size: 12px; color: var(--muted); margin: 0; text-align: center; }
+
+@media (max-width: 560px) {
+  :root { --shelf-h: 220px; }
+  .bar { grid-template-columns: 1fr 1fr auto; }
+  .bar .hide-s { display: none; }
+  .weekdays, .grid { column-gap: 4px; }
+  .grid { row-gap: 10px; }
+  .day .n { font-size: 12px; }
+  .cover-btn .plain { font-size: 9px; padding: 3px; }
+  dialog:not(#join) { width: 100%; max-width: 100%; max-height: 100%; height: 100%; margin: 0; }
+  .sheet { padding: calc(14px + env(safe-area-inset-top, 0px)) 18px calc(18px + env(safe-area-inset-bottom, 0px)); }
+  .book { grid-template-columns: 104px minmax(0, 1fr); gap: 14px; }
+  #f-title { font-size: 19px; }
+}
+@media print {
+  .switch, .hint, dialog, .bar .act, .nav { display: none !important; }
+  body { background: #fff; color: #000; padding: 0; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<main class="page">
+  <p class="notice" id="notice" role="status" hidden></p>
+
+  <!-- Monthly index -->
+  <section id="view-month" aria-label="먼슬리">
+    <div style="display:grid; gap:18px">
+      <div class="titlerow">
+        <h1 id="month" class="num-t">OCT</h1>
+        <div class="side">
+        <button id="print" class="print">인쇄용 저장</button>
+        <nav class="nav" aria-label="달 이동">
+          <button id="prev" class="arrow" aria-label="이전 달">←</button>
+          <button id="today">이번 달</button>
+          <button id="next" class="arrow" aria-label="다음 달">→</button>
+        </nav>
+        </div>
+      </div>
+      <div>
+        <div class="grid" id="grid"></div>
+      </div>
+      <p class="hint" id="hint" hidden>날짜를 누르면 그날 다 읽은 책을 기록할 수 있어요.</p>
+    </div>
+  </section>
+
+  <!-- Shelf -->
+  <section id="view-shelf" aria-label="책등" hidden>
+    <div style="display:grid; gap:22px">
+      <div class="shelves" id="shelves"></div>
+    </div>
+  </section>
+
+  <!-- Friends' shelves -->
+  <section id="view-friends" aria-label="친구 책장" hidden>
+    <div style="display:grid; gap:22px">
+      <div id="friend-wrap" style="display:grid; gap:22px">
+        <div id="f-month-wrap" style="display:grid; gap:18px">
+          <div class="titlerow">
+            <h1 id="f-month" class="num-t">OCT</h1>
+            <nav class="nav" aria-label="달 이동">
+              <button id="f-prev" class="arrow" aria-label="이전 달">←</button>
+              <button id="f-next" class="arrow" aria-label="다음 달">→</button>
+            </nav>
+          </div>
+          <div class="grid" id="f-grid"></div>
+        </div>
+        <div class="shelves" id="friend-shelves" hidden></div>
+        <p class="empty" id="friend-none" hidden>아직 다른 사람의 책장이 없어요.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- My profile -->
+  <section id="view-profile" aria-label="내 프로필" hidden>
+    <div style="display:grid; gap:28px">
+      <div class="profile-head">
+        <button type="button" class="avatar-pick" id="p-avatar" aria-label="프로필 이미지 바꾸기"></button>
+        <input class="nick" id="p-nick" maxlength="20" aria-label="닉네임">
+        <button type="button" class="p-out" id="p-out" hidden>로그아웃</button>
+      </div>
+      <div style="display:grid; gap:0">
+        <div class="profile-meta"><span id="p-count">기록한 문장</span><span class="status" id="p-status" aria-live="polite"></span></div>
+        <div class="sentences" id="p-sentences"></div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot" id="foot">
+    <span id="foot-a"></span>
+    <span id="foot-c" class="num-t"></span>
+  </footer>
+</main>
+
+<div class="switch" role="group" aria-label="화면 전환">
+  <button id="to-month" aria-pressed="true">먼슬리</button>
+  <button id="to-shelf" aria-pressed="false">책등</button>
+  <button id="to-friends" class="presence" aria-expanded="false" aria-label="친구 책장" hidden></button>
+</div>
+
+<dialog id="sheet" aria-label="책 기록" tabindex="-1">
+  <form class="sheet" id="form" method="dialog" autocomplete="off">
+    <div class="sheet-top">
+      <input type="date" id="f-date" aria-label="기록한 날">
+      <div class="kind" role="group" aria-label="기록 종류">
+        <button type="button" data-k="book" aria-pressed="true">책</button>
+        <button type="button" data-k="diary" aria-pressed="false">일기</button>
+      </div>
+      <button type="button" class="close" id="close" aria-label="닫기">×</button>
+    </div>
+
+    <div class="book">
+      <button type="button" class="cover-pick" id="cover-pick" aria-label="표지 이미지 넣기">
+        <span id="cover-empty">표지 넣기<br>＋</span>
+        <img id="cover-img" alt="" hidden>
+        <span class="swap">표지 바꾸기</span>
+      </button>
+      <input type="file" id="f-cover" accept="image/*" hidden>
+
+      <div class="diary-note field">
+        <label for="f-text">오늘의 기록</label>
+        <textarea id="f-text" rows="3" placeholder="짧게 남겨 보세요"></textarea>
+      </div>
+
+      <div class="meta">
+        <div class="field"><input id="f-title" placeholder="제목" aria-label="제목"></div>
+        <div class="field"><input id="f-author" placeholder="저자" aria-label="저자"></div>
+        <div class="field"><input id="f-publisher" placeholder="출판사" aria-label="출판사"></div>
+        <div class="field pages-field"><input id="f-pages" type="number" min="1" inputmode="numeric" placeholder="쪽수" aria-label="쪽수"><span>쪽</span></div>
+        <div class="stars" id="stars" role="group" aria-label="별점"></div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="field"><label for="f-reason">이 책을 고른 이유</label><textarea id="f-reason" rows="1"></textarea></div>
+      <div class="field">
+        <div class="label-row"><span class="lbl" id="quotes-lbl">기억하고 싶은 문장</span><button type="button" class="add-quote" id="add-quote" aria-label="문장 추가">＋</button></div>
+        <div class="quotes" id="quotes" role="group" aria-labelledby="quotes-lbl"></div>
+      </div>
+      <div class="field"><label for="f-review">감상평</label><textarea id="f-review" rows="1"></textarea></div>
+    </div>
+
+    <div class="sheet-foot">
+      <span class="status" id="status" aria-live="polite"></span>
+      <div class="foot-actions">
+        <button type="button" class="link" id="add-same">이 날 기록 더하기</button>
+        <button type="button" class="link danger" id="delete">삭제</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="join" aria-label="프로필 만들기">
+  <form class="join" id="join-form" method="dialog" autocomplete="off">
+    <h2 id="join-title">책장 만들기</h2>
+    <p id="join-sub">이름과 프로필 이미지를 정하면 친구들이 내 책장을 알아볼 수 있어요.</p>
+    <button type="button" class="avatar-pick" id="avatar-pick" aria-label="프로필 이미지 고르기">
+      <span id="avatar-empty">이미지 넣기<br>＋</span>
+      <img id="avatar-img" alt="" hidden>
+    </button>
+    <input type="file" id="f-avatar" accept="image/*" hidden>
+    <div class="field"><input id="f-nick" maxlength="20" placeholder="이름" aria-label="이름"></div>
+    <span class="status" id="join-status" aria-live="polite"></span>
+    <button type="submit" class="primary" id="join-save" disabled>시작하기</button>
+  </form>
+</dialog>
+
+<div class="guide" id="guide" hidden role="dialog" aria-modal="true" aria-labelledby="guide-title">
+  <div class="hole" id="guide-hole"></div>
+  <div class="card" id="guide-card">
+    <h3 id="guide-title"></h3>
+    <p id="guide-text"></p>
+    <div class="g-row">
+      <span class="step" id="guide-step"></span>
+      <div><button type="button" class="skip" id="guide-skip">건너뛰기</button><button type="button" class="next" id="guide-next">다음</button></div>
+    </div>
+  </div>
+</div>
+
+<dialog id="export" aria-label="인쇄용 이미지">
+  <div class="sheet">
+    <div class="sheet-top">
+      <span class="status">인쇄용 월간 기록</span>
+      <button type="button" class="close" id="export-close" aria-label="닫기">×</button>
+    </div>
+    <div class="export-view">
+      <img id="export-img" alt="이번 달 독서 기록 인쇄용 이미지">
+      <p>이미지를 길게 누르거나 오른쪽 클릭해서 저장한 뒤 인쇄하세요.</p>
+    </div>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const pad = (n) => String(n).padStart(2, "0");
+  const MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+  const keyOf = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
+  const todayKey = () => { const t = new Date(); return keyOf(t.getFullYear(), t.getMonth(), t.getDate()); };
+  const newId = () => "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const fmt = (n) => n.toLocaleString("ko-KR");
+  const FIELDS = ["kind", "text", "date", "title", "author", "publisher", "pages", "reason", "quotes", "review", "rating", "cover", "coverData"];
+  const LOCAL_KEY = "monthly-booklog.books";
+  const VIEW_KEY = "monthly-booklog.view";
+
+  const now = new Date();
+  const view = { y: now.getFullYear(), m: now.getMonth() };
+  let screen = "month";
+  try { if (localStorage.getItem(VIEW_KEY) === "shelf") screen = "shelf"; } catch {}  // the friends view is never restored
+  let books = {};          // my books
+  let store = null;
+  let me = null;           // my id (shared mode only)
+  let userApi = null;
+  let members = [];        // ids of people who have a shelf
+  let names = {};          // id -> Claude account name, a fallback when no nickname
+  let profiles = {};       // id -> { nickname, avatarData } from the shelf document
+  let friend = null;       // id of the shelf being viewed
+  let friendBooks = {};
+  let unsubFriend = null;
+  let dbRef = null;
+  let readOnly = false;    // the open sheet belongs to someone else
+  let viewerOnly = false;  // signed in without permission to write
+
+  /* ── Storage: the artifact's database + asset store, or this browser as a fallback ── */
+  function bodyOf(b) {
+    const body = {};
+    FIELDS.forEach((k) => { if (b[k] !== undefined && b[k] !== null && b[k] !== "") body[k] = b[k]; });
+    body.quotes = (b.quotes || []).filter((q) => (q.page || "").trim() || (q.text || "").trim());
+    return body;
+  }
+  function dbStore(db, assets, uid) {
+    const shelf = db.doc("shelves/" + uid);
+    let joined = false;
+    return {
+      async save(b) {
+        const body = bodyOf(b);
+        body.updatedAt = new Date().toISOString();
+        body.createdAt = b.createdAt || body.updatedAt;
+        if (!joined && !members.includes(uid)) await shelf.set({ since: body.updatedAt, ...(profiles[uid] || {}) });
+        joined = true;
+        await shelf.collection("books").doc(b.id).set(body);
+      },
+      async remove(b) {
+        await shelf.collection("books").doc(b.id).delete();
+        if (b.cover && assets) assets.delete(b.cover).catch(() => {});
+      },
+      async putCover(blob) {
+        if (assets) { const r = await assets.upload(blob, { type: "image/jpeg" }); return { cover: r.id, url: r.url }; }
+        const data = await blobToDataUrl(await shrink(blob, 360));
+        return { coverData: data, url: data };
+      },
+      dropCover(id) { if (id && assets) assets.delete(id).catch(() => {}); },
+    };
+  }
+  function localStore() {
+    const persist = () => {
+      try { localStorage.setItem(LOCAL_KEY, JSON.stringify(Object.values(books))); }
+      catch { throw { message: "브라우저 저장 공간이 부족해요." }; }
+    };
+    return {
+      async save(b) {
+        const body = bodyOf(b); body.id = b.id;
+        body.createdAt = b.createdAt || new Date().toISOString();
+        books[b.id] = body; persist(); renderAll();
+      },
+      async remove(b) { delete books[b.id]; persist(); renderAll(); },
+      async putCover(blob) { const data = await blobToDataUrl(await shrink(blob, 300)); return { coverData: data, url: data }; },
+      dropCover() {},
+    };
+  }
+  function loadLocal() {
+    try {
+      const arr = JSON.parse(localStorage.getItem(LOCAL_KEY) || "[]");
+      const out = {}; arr.forEach((b) => { if (b && b.id) out[b.id] = b; }); return out;
+    } catch { return {}; }
+  }
+
+  /* ── Images ── */
+  function shrink(file, width) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const w = Math.min(width, img.naturalWidth);
+        const h = Math.round(img.naturalHeight * (w / img.naturalWidth));
+        const c = document.createElement("canvas"); c.width = w; c.height = h;
+        const ctx = c.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        c.toBlob((b) => (b ? resolve(b) : reject(new Error("image"))), "image/jpeg", 0.86);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image")); };
+      img.src = url;
+    });
+  }
+  function blobToDataUrl(blob) {
+    return new Promise((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.readAsDataURL(blob); });
+  }
+  const loadImg = (src) => new Promise((res) => {
+    if (!src) return res(null);
+    const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null);
+    if (/^https?:/.test(src)) i.crossOrigin = "anonymous";  // covers on another host still need their pixels read
+    i.src = src;
+  });
+  // On the standalone site covers live in its own storage; here they are artifact assets
+  const blobUrl = (id) => (window.claude && window.claude.blobUrl ? window.claude.blobUrl(id) : "/_blob/" + id);
+  const coverSrc = (b) => (b.cover ? blobUrl(b.cover) : b.coverData || "");
+
+  /* Spine colour: the cover's most prominent colour, with vivid colours weighted up */
+  const colorCache = {}, colorPending = {};
+  function dominant(img) {
+    const c = document.createElement("canvas"); c.width = 24; c.height = 36;
+    const g = c.getContext("2d", { willReadFrequently: true });
+    g.drawImage(img, 0, 0, 24, 36);
+    const px = g.getImageData(0, 0, 24, 36).data;
+    const bins = {};
+    for (let i = 0; i < px.length; i += 4) {
+      const r = px[i], gr = px[i + 1], b = px[i + 2];
+      const mx = Math.max(r, gr, b), mn = Math.min(r, gr, b);
+      const sat = mx ? (mx - mn) / mx : 0;
+      const key = (r >> 5) * 64 + (gr >> 5) * 8 + (b >> 5);
+      const bin = bins[key] || (bins[key] = { w: 0, n: 0, r: 0, g: 0, b: 0 });
+      bin.w += 1 + sat * 2.5; bin.n++; bin.r += r; bin.g += gr; bin.b += b;
+    }
+    let best = null;
+    Object.values(bins).forEach((bin) => { if (!best || bin.w > best.w) best = bin; });
+    return [best.r / best.n, best.g / best.n, best.b / best.n].map(Math.round);
+  }
+  const FALLBACK = ["#E8312A", "#4A9FF5", "#F2D23C", "#FF6A1F", "#8C9199", "#F6BFC6", "#774B42", "#C9CCD1", "#111111", "#F28CA6"];
+  const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  function hash(s) { let h = 7; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; }
+  function spineRgb(b) {
+    const src = coverSrc(b);
+    const fallback = hexRgb(FALLBACK[hash(b.id) % FALLBACK.length]);
+    if (!src) return fallback;
+    if (colorCache[src]) return colorCache[src];
+    if (!colorPending[src]) {
+      colorPending[src] = true;
+      loadImg(src).then((img) => {
+        try { colorCache[src] = img ? dominant(img) : fallback; } catch { colorCache[src] = fallback; }
+        if (screen === "shelf") renderAll();
+      });
+    }
+    return null;
+  }
+  const inkOn = ([r, g, b]) => ((0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.62 ? "#111111" : "#FFFFFF");
+
+  function booksIn(y, m, map = books) {
+    const prefix = `${y}-${pad(m + 1)}-`;
+    return Object.values(map)
+      .filter((b) => b.date && b.date.startsWith(prefix))
+      .sort((a, b) => (a.date + (a.createdAt || "")).localeCompare(b.date + (b.createdAt || "")));
+  }
+  const pagesOf = (b) => Math.max(0, parseInt(b.pages, 10) || 0);
+  const avgRating = (list) => {
+    const r = list.filter((b) => b.rating > 0);
+    return r.length ? (r.reduce((s, b) => s + b.rating, 0) / r.length).toFixed(1) : null;
+  };
+  const statLine = (list) => {
+    const p = list.reduce((s, b) => s + pagesOf(b), 0), avg = avgRating(list);
+    return `${list.length}권${p ? " · " + fmt(p) + "쪽" : ""}${avg ? " · ★" + avg : ""}`;
+  };
+
+  /* ── Month index ── */
+  function renderMonth() {
+    const { y, m } = view;
+    $("#month").textContent = MON[m];
+    $("#month").setAttribute("aria-label", `${y}년 ${m + 1}월`);
+    renderMonthGrid($("#grid"), books, false);
+    $("#hint").hidden = !store || Object.keys(books).length > 0;
+  }
+  function renderMonthGrid(grid, map, others) {
+    const { y, m } = view;
+    const first = new Date(y, m, 1).getDay();
+    const days = new Date(y, m + 1, 0).getDate();
+    const total = Math.ceil((first + days) / 7) * 7;
+    const list = booksIn(y, m, map);
+    const byDay = {};
+    list.forEach((b) => (byDay[b.date] = byDay[b.date] || []).push(b));
+
+    grid.textContent = "";
+    const tKey = todayKey();
+    for (let i = 0; i < total; i++) {
+      const d = i - first + 1;
+      const cell = document.createElement("div");
+      cell.className = "day";
+      if (d < 1 || d > days) { cell.classList.add("pad"); grid.appendChild(cell); continue; }
+      const key = keyOf(y, m, d);
+      const dayBooks = byDay[key] || [];
+      if (i % 7 === 0) cell.classList.add("sun");
+      if (key === tKey) cell.classList.add("today");
+
+      const num = document.createElement("span");
+      num.className = "n"; num.textContent = pad(d);
+      const slot = document.createElement("div");
+      slot.className = "slot";
+
+      if (!dayBooks.length && others) {
+        // nothing to add on someone else's month, but keep the same rule under the date
+        const blank = document.createElement("div"); blank.className = "add static"; slot.appendChild(blank);
+      } else if (!dayBooks.length) {
+        const add = document.createElement("button");
+        add.className = "add";
+        add.setAttribute("aria-label", `${m + 1}월 ${d}일 기록하기`);
+        add.addEventListener("click", () => openBook(null, key));
+        slot.appendChild(add);
+      } else {
+        const covers = document.createElement("div");
+        covers.className = "covers";
+        dayBooks.slice(0, 3).forEach((b) => {
+          const btn = document.createElement(others ? "div" : "button");
+          btn.className = "cover-btn" + (others ? " static" : "");
+          btn.setAttribute("aria-label", `${m + 1}월 ${d}일, ${b.kind === "diary" ? "일기" : b.title || "제목 없는 책"}`);
+          if (others) btn.setAttribute("role", "img");
+          const src = coverSrc(b);
+          if (src) {
+            const img = document.createElement("img");
+            img.src = src; img.alt = ""; img.loading = "lazy";
+            img.onerror = () => img.replaceWith(plain(b));
+            btn.appendChild(img);
+          } else btn.appendChild(plain(b));
+          if (!others) btn.addEventListener("click", () => openBook(b.id));
+          covers.appendChild(btn);
+        });
+        slot.appendChild(covers);
+        if (dayBooks.length > 3) {
+          const more = document.createElement("span");
+          more.className = "more"; more.textContent = `+${dayBooks.length - 3}`;
+          slot.appendChild(more);
+        }
+      }
+      cell.append(num, slot);
+      grid.appendChild(cell);
+    }
+  }
+  function plain(b) {
+    const s = document.createElement("span");
+    if (b.kind === "diary") { s.className = "plain note"; s.textContent = (b.text || "").trim() || "일기"; return s; }
+    s.className = "plain"; s.textContent = b.title || "제목 없음";
+    return s;
+  }
+
+  /* ── Shelf: one shelf per month, newest month on top ── */
+  function spineWidth(b) {
+    const p = pagesOf(b);
+    const base = p ? 14 + p * 0.075 : 34;
+    const scale = window.innerWidth < 560 ? 0.8 : 1;
+    return Math.round(Math.min(100, Math.max(18, base)) * scale);
+  }
+  function renderShelf() { renderShelfInto($("#shelves"), books, false); }
+  function renderShelfInto(box, map, others) {
+    const all = Object.values(map).filter((b) => b.date && b.kind !== "diary")
+      .sort((a, b) => (b.date + (b.createdAt || "")).localeCompare(a.date + (a.createdAt || "")));
+    const groups = [];
+    all.forEach((b) => {
+      const k = b.date.slice(0, 7);
+      if (!groups.length || groups[groups.length - 1].k !== k) groups.push({ k, list: [] });
+      groups[groups.length - 1].list.push(b);
+    });
+    box.textContent = "";
+    if (!all.length) {
+      const e = document.createElement("p");
+      e.className = "empty";
+      e.textContent = others ? "아직 꽂힌 책이 없어요." : "아직 꽂힌 책이 없어요. 먼슬리에서 다 읽은 책을 기록하면 여기에 꽂혀요.";
+      box.appendChild(e);
+    }
+    groups.forEach(({ k, list }) => {
+      list.reverse(); // oldest first, left to right
+      const [yy, mm] = k.split("-");
+      const shelf = document.createElement("div");
+      shelf.className = "shelf";
+      const row = document.createElement("div");
+      row.className = "row";
+      list.forEach((b) => {
+        const s = document.createElement(others ? "div" : "button");
+        if (others) s.setAttribute("role", "img");
+        const w = spineWidth(b);
+        const rgb = spineRgb(b);
+        s.className = "spine" + (w < 30 ? " thin" : "") + (others ? " static" : "");
+        s.style.width = w + "px";
+        s.style.background = rgb ? `rgb(${rgb.join(",")})` : "var(--soft)";
+        s.style.color = rgb ? inkOn(rgb) : "var(--ink)";
+        s.style.setProperty("--k", (0.8 + (hash(b.id) % 21) / 100).toFixed(2));
+        s.setAttribute("aria-label", `${b.title || "제목 없는 책"}${b.author ? ", " + b.author : ""}${pagesOf(b) ? ", " + pagesOf(b) + "쪽" : ""}`);
+        const t = document.createElement("span");
+        t.className = "t"; t.textContent = b.title || "제목 없음";
+        t.style.fontSize = Math.max(10, Math.min(18, Math.round(w * 0.42))) + "px";
+        const a = document.createElement("span");
+        a.className = "a"; a.textContent = b.author || "";
+        s.append(t, a);
+        if (!others) s.addEventListener("click", () => openBook(b.id));
+        row.appendChild(s);
+      });
+      shelf.setAttribute("aria-label", `${yy}년 ${Number(mm)}월`);
+      shelf.append(row);
+      box.appendChild(shelf);
+    });
+  }
+
+  function renderFoot() {
+    const { y, m } = view;
+    const days = new Date(y, m + 1, 0).getDate();
+    $("#foot-a").textContent = `${MON[m]} ${y} (1/1)`;
+    $("#foot-c").textContent = `${y}.${pad(m + 1)}.01–${pad(m + 1)}.${days}`;
+  }
+  const nameOf = (id) => (profiles[id] && profiles[id].nickname) || names[id] || "이름 없음";
+  function ring(el, id) {
+    el.textContent = "";
+    const p = profiles[id];
+    if (p && p.avatarData) { const i = document.createElement("img"); i.src = p.avatarData; i.alt = ""; el.appendChild(i); }
+    else { const t = document.createElement("span"); t.className = "initial"; t.textContent = nameOf(id).slice(0, 1); el.appendChild(t); }
+  }
+  async function resolveNames(ids) {
+    if (!userApi || !ids.length) return;
+    try {
+      const ps = await userApi.profiles(ids);
+      ids.forEach((id) => { if (ps[id]) names[id] = ps[id].name || ""; });
+    } catch {}
+    renderAll();
+  }
+  function renderFriends() {
+    $("#friend-none").hidden = !!friend;
+    $("#f-month-wrap").hidden = !friend || screen !== "month";
+    $("#friend-shelves").hidden = !friend || screen !== "shelf";
+    if (!friend) return;
+    if (screen === "month") {
+      $("#f-month").textContent = MON[view.m];
+      $("#f-month").setAttribute("aria-label", `${view.y}년 ${view.m + 1}월`);
+      renderMonthGrid($("#f-grid"), friendBooks, true);
+    } else renderShelfInto($("#friend-shelves"), friendBooks, true);
+  }
+  const friendIds = () => members.filter((id) => id !== me);
+  let online = [];
+  let profileOpen = false;  // a profile page is showing
+  let profileId = null;     // whose
+  function addCard(a, id) {
+    a.classList.add("mine");
+    const c = document.createElement("span"); c.className = "pcard"; c.dataset.id = id;
+    const t = document.createElement("span"); t.textContent = `${nameOf(id)} · 프로필 보기`;
+    c.appendChild(t); a.appendChild(c);
+  }
+  let picking = false;     // the switch is showing everyone instead of the overlapped live viewers
+  function face(id) {
+    const f = document.createElement("span"); f.className = "face";
+    const p = profiles[id];
+    if (p && p.avatarData) { const i = document.createElement("img"); i.src = p.avatarData; i.alt = ""; f.appendChild(i); }
+    else f.textContent = nameOf(id).slice(0, 1);
+    return f;
+  }
+  function renderPresence() {
+    const box = $("#to-friends");
+    box.textContent = "";
+    box.classList.toggle("open", picking);
+    box.setAttribute("aria-expanded", picking);
+    if (picking) {
+      const shown = profileOpen ? profileId : friend || me;
+      const add = (id) => {
+        const a = document.createElement("span");
+        a.className = "av" + (id === shown ? " on" : ""); a.dataset.id = id;
+        addCard(a, id);
+        a.appendChild(face(id)); box.appendChild(a);
+      };
+      if (me && !viewerOnly) add(me);
+      const others = friendIds();
+      others.forEach(add);
+      box.setAttribute("aria-label", "책장 고르기");
+      return;
+    }
+    const ids = !me || viewerOnly ? online.filter((id) => id !== me) : online.includes(me) ? online : [me, ...online];
+    if (!ids.length) { box.textContent = "친구 책장"; box.style.padding = "8px 18px"; return; }
+    box.style.padding = "";
+    const shown = ids.slice(0, 5);
+    shown.forEach((id, i) => {
+      const a = document.createElement("span");
+      a.style.zIndex = shown.length - i;  // me first and on top
+      a.className = "av" + (id === me && !viewerOnly ? " on" : "");
+      addCard(a, id);
+      a.appendChild(face(id));
+      box.appendChild(a);
+    });
+    if (ids.length > shown.length) {
+      const m = document.createElement("span");
+      m.className = "av";
+      const f = document.createElement("span"); f.className = "face"; f.style.fontSize = "10px";
+      f.textContent = "+" + (ids.length - shown.length);
+      m.appendChild(f); box.appendChild(m);
+    }
+    box.setAttribute("aria-label", "친구 책장. 지금 보고 있는 사람: " + ids.map((id) => (id === me ? "나" : nameOf(id))).join(", "));
+  }
+  async function joinRoom() {
+    let room = null;
+    try { room = await window.claude.use("room"); } catch {}
+    if (!room) return;
+    room.onPeers(({ peers }) => {
+      const ids = [];
+      peers.forEach((pr) => {
+        if (pr.kind !== "viewer") return;
+        const id = pr.by || (pr.presence && typeof pr.presence.uid === "string" ? pr.presence.uid : null);
+        if (id && !ids.includes(id)) ids.push(id);
+      });
+      // me first, then everyone else
+      online = ids.sort((a, b) => (a === me ? -1 : b === me ? 1 : 0));
+      renderPresence();
+    }, () => {});
+    if (me) room.presence({ uid: me }).catch(() => {});
+  }
+
+  function syncSwitch() {
+    $("#to-month").setAttribute("aria-pressed", !profileOpen && screen === "month");
+    $("#to-shelf").setAttribute("aria-pressed", !profileOpen && screen === "shelf");
+  }
+  $("#f-prev").addEventListener("click", () => { view.m--; if (view.m < 0) { view.m = 11; view.y--; } renderAll(); });
+  $("#f-next").addEventListener("click", () => { view.m++; if (view.m > 11) { view.m = 0; view.y++; } renderAll(); });
+  /* Whose shelf is showing. The month/spine buttons always apply to it. */
+  function openFriend(id) {
+    if (unsubFriend) { unsubFriend(); unsubFriend = null; }
+    friend = id; friendBooks = {};
+    if (id && dbRef) {
+      unsubFriend = dbRef.doc("shelves/" + id).collection("books").onSnapshot(
+        (snap) => { const next = {}; snap.docs.forEach((d) => { next[d.id] = { id: d.id, ...d.data() }; }); friendBooks = next; if (friend === id) renderAll(); },
+        () => {}
+      );
+    }
+    setScreen(screen);
+  }
+
+  function renderAll() {
+    renderFoot();
+    renderPresence();
+    if (profileOpen) renderProfile();
+    else if (friend || viewerOnly) renderFriends();
+    else if (screen === "shelf") renderShelf();
+    else renderMonth();
+  }
+  function setScreen(s) {
+    screen = s;
+    try { localStorage.setItem(VIEW_KEY, s); } catch {}
+    const other = !profileOpen && (!!friend || viewerOnly);
+    $("#view-month").hidden = profileOpen || other || s !== "month";
+    $("#view-shelf").hidden = profileOpen || other || s !== "shelf";
+    $("#view-friends").hidden = !other;
+    $("#view-profile").hidden = !profileOpen;
+    $("#foot").hidden = profileOpen;
+    renderAll();
+    syncSwitch();
+    window.scrollTo(0, 0);
+  }
+  $("#to-month").addEventListener("click", () => { profileOpen = false; setScreen("month"); });
+  $("#to-shelf").addEventListener("click", () => { profileOpen = false; setScreen("shelf"); });
+  /* First tap opens the picker; then tap a face to show that shelf. My own face brings me home and closes it. */
+  $("#to-friends").addEventListener("click", (e) => {
+    const card = e.target.closest(".pcard");
+    if (card) { openProfile(card.dataset.id); return; }
+    if (!picking) { picking = true; renderPresence(); return; }
+    const av = e.target.closest(".av");
+    const id = av && av.dataset.id;
+    if (!id) return;
+    const current = profileOpen ? null : friend || me;
+    if (id === current) { openProfile(id); return; }   // tapping whoever is showing opens their profile
+    profileOpen = false;
+    if (id === me) { picking = false; openFriend(null); } else openFriend(id);
+  });
+
+  /* ── My profile: change picture and name in place, read back every sentence I kept ── */
+  function openProfile(id) {
+    if (!id) return;
+    profileOpen = true; profileId = id;
+    if (id === me) { picking = false; if (friend) openFriend(null); else setScreen(screen); }
+    else { picking = true; if (friend !== id) openFriend(id); else setScreen(screen); }
+  }
+  function renderProfile() {
+    const id = profileId, mine = id === me && !viewerOnly;
+    $("#p-out").hidden = !(mine && window.claude && window.claude.signOut);
+    const pa = $("#p-avatar");
+    pa.textContent = "";
+    pa.disabled = !mine;
+    $("#p-nick").readOnly = !mine;
+    $("#view-profile").classList.toggle("theirs", !mine);
+    const p = profiles[id] || {};
+    if (p.avatarData) { const i = document.createElement("img"); i.src = p.avatarData; i.alt = ""; pa.appendChild(i); pa.classList.add("filled"); }
+    else if (mine) { pa.classList.remove("filled"); pa.append("이미지 넣기"); }
+    else { pa.classList.add("filled", "blank"); const t = document.createElement("span"); t.className = "initial"; t.textContent = nameOf(id).slice(0, 1); pa.appendChild(t); }
+    if (p.avatarData || mine) pa.classList.remove("blank");
+    if (mine) { const sw = document.createElement("span"); sw.className = "swap"; sw.textContent = "바꾸기"; pa.appendChild(sw); }
+    if (document.activeElement !== $("#p-nick")) $("#p-nick").value = nameOf(id);
+    if (!mine) $("#p-status").textContent = "";
+    const src = mine ? books : friendBooks;
+    const list = [];
+    Object.values(src).filter((b) => b.kind !== "diary").sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0))
+      .forEach((b) => quotesOf(b).forEach((q) => { if ((q.text || "").trim()) list.push({ b, q }); }));
+    $("#p-count").textContent = `기록한 문장 ${list.length}`;
+    const box = $("#p-sentences");
+    box.textContent = "";
+    if (!list.length) {
+      const e = document.createElement("p"); e.className = "empty"; e.style.borderTop = "0";
+      e.textContent = mine ? "아직 기록한 문장이 없어요. 책 기록에서 문장을 남기면 여기에 모여요." : "아직 기록한 문장이 없어요.";
+      box.appendChild(e); return;
+    }
+    list.forEach(({ b, q }) => {
+      const it = document.createElement("button"); it.type = "button"; it.className = "sentence";
+      const t = document.createElement("span"); t.className = "q"; t.textContent = q.text.trim();
+      const m = document.createElement("span"); m.className = "m";
+      const ti = document.createElement("b"); ti.textContent = b.title || "제목 없음";
+      m.appendChild(ti);
+      [b.author, q.page ? `p.${q.page}` : "", (b.date || "").replace(/-/g, ".")].filter(Boolean).forEach((x) => {
+        const sp = document.createElement("span"); sp.textContent = x; m.appendChild(sp);
+      });
+      it.append(t, m);
+      if (mine) it.addEventListener("click", () => openBook(b.id)); else it.disabled = true;
+      box.appendChild(it);
+    });
+  }
+  async function saveProfile(patch) {
+    $("#p-status").textContent = "저장 중…";
+    try {
+      const ref = dbRef.doc("shelves/" + me);
+      const cur = await ref.get();
+      const prev = cur.exists ? cur.data() : {};
+      await ref.set({ ...prev, since: prev.since || new Date().toISOString(), ...patch });
+      profiles[me] = { ...(profiles[me] || {}), ...patch };
+      $("#p-status").textContent = "저장됨";
+      renderAll();
+    } catch { $("#p-status").textContent = "저장하지 못했어요."; }
+  }
+  const pFile = document.createElement("input"); pFile.type = "file"; pFile.accept = "image/*";
+  $("#p-avatar").addEventListener("click", () => pFile.click());
+  pFile.addEventListener("change", async () => {
+    const f = pFile.files[0]; pFile.value = "";
+    if (!f) return;
+    try { saveProfile({ avatarData: await squareAvatar(f) }); }
+    catch { $("#p-status").textContent = "이미지를 읽지 못했어요. 다른 파일을 골라 주세요."; }
+  });
+  $("#p-out").addEventListener("click", () => window.claude.signOut());
+  function commitNick() {
+    if (profileId !== me || viewerOnly) return;
+    const v = $("#p-nick").value.trim().slice(0, 20);
+    if (!v) { $("#p-nick").value = nameOf(me); return; }
+    if (v !== ((profiles[me] || {}).nickname || "")) saveProfile({ nickname: v });
+  }
+  $("#p-nick").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#p-nick").blur(); } });
+  $("#p-nick").addEventListener("blur", commitNick);
+  let resizeT = null;
+  window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (screen !== "month") renderAll(); }, 150); });
+
+  $("#prev").addEventListener("click", () => { view.m--; if (view.m < 0) { view.m = 11; view.y--; } renderAll(); });
+  $("#next").addEventListener("click", () => { view.m++; if (view.m > 11) { view.m = 0; view.y++; } renderAll(); });
+  $("#today").addEventListener("click", () => { const t = new Date(); view.y = t.getFullYear(); view.m = t.getMonth(); renderAll(); });
+
+  /* ── Book sheet ── */
+  const sheet = $("#sheet");
+  const inputs = {
+    date: $("#f-date"), title: $("#f-title"), author: $("#f-author"), publisher: $("#f-publisher"),
+    pages: $("#f-pages"), reason: $("#f-reason"), review: $("#f-review"), text: $("#f-text"),
+  };
+  let draft = null, created = false, saveTimer = null, dirty = false;
+  let chain = Promise.resolve();
+
+  const starsEl = $("#stars");
+  for (let i = 1; i <= 5; i++) {
+    const s = document.createElement("button");
+    s.type = "button"; s.textContent = "★"; s.dataset.v = i;
+    s.setAttribute("aria-label", `별 ${i}개`);
+    s.addEventListener("click", () => { draft.rating = draft.rating === i ? 0 : i; paintStars(); changed(); });
+    starsEl.appendChild(s);
+  }
+  function paintStars() {
+    [...starsEl.children].forEach((s) => {
+      const on = Number(s.dataset.v) <= (draft.rating || 0);
+      s.classList.toggle("on", on); s.setAttribute("aria-pressed", on);
+    });
+  }
+  function setStatus(text, err) { const el = $("#status"); el.textContent = text; el.classList.toggle("err", !!err); }
+
+  function quotesOf(b) {
+    if (Array.isArray(b.quotes)) return b.quotes.map((q) => ({ page: q.page || "", text: q.text || "" }));
+    return b.quote ? [{ page: "", text: b.quote }] : [];
+  }
+
+  function openBook(id, dateKey, source) {
+    if (!store) return;
+    readOnly = !!source;
+    const from = source || books;
+    if (id && from[id]) { draft = { ...from[id] }; created = true; draft.quotes = quotesOf(draft); delete draft.quote; }
+    else { draft = { id: newId(), date: dateKey || todayKey(), rating: 0, quotes: [] }; created = false; }
+    dirty = false;
+    sheet.classList.toggle("readonly", readOnly);
+    Object.entries(inputs).forEach(([k, el]) => { el.value = draft[k] || ""; el.readOnly = readOnly; });
+    $("#cover-pick").disabled = readOnly;
+    $("#cover-empty").innerHTML = readOnly ? "표지 없음" : "표지 넣기<br>＋";
+    [...starsEl.children].forEach((b) => { b.disabled = readOnly; });
+    paintCover(coverSrc(draft));
+    paintKind();
+    paintStars();
+    paintQuotes();
+    disarmDelete();
+    syncFoot();
+    setStatus(readOnly ? `${nameOf(friend)}의 기록` : created ? "" : isDiary(draft) ? "사진이나 글을 넣으면 자동으로 저장돼요." : "제목이나 표지를 넣으면 자동으로 저장돼요.");
+    if (!sheet.open) sheet.showModal();
+    sizeAll();
+    if (!created) setTimeout(() => (isDiary(draft) ? inputs.text : inputs.title).focus(), 30);
+    else sheet.focus();
+  }
+  const isDiary = (b) => b && b.kind === "diary";
+  function paintKind() {
+    const d = isDiary(draft);
+    $("#form").classList.toggle("is-diary", d);
+    document.querySelectorAll(".kind button").forEach((b) => { b.setAttribute("aria-pressed", b.dataset.k === (d ? "diary" : "book")); b.disabled = readOnly; });
+    $("#cover-pick").setAttribute("aria-label", d ? "사진이나 그림 넣기" : "표지 이미지 넣기");
+    $("#cover-empty").innerHTML = readOnly ? (d ? "이미지 없음" : "표지 없음") : d ? "사진·그림<br>＋" : "표지 넣기<br>＋";
+    $(".cover-pick .swap").textContent = d ? "이미지 바꾸기" : "표지 바꾸기";
+  }
+  document.querySelectorAll(".kind button").forEach((b) => b.addEventListener("click", () => {
+    if (readOnly || !draft) return;
+    if (b.dataset.k === "diary") draft.kind = "diary"; else delete draft.kind;
+    paintKind(); sizeAll();
+    if (!created) setStatus(isDiary(draft) ? "사진이나 글을 넣으면 자동으로 저장돼요." : "제목이나 표지를 넣으면 자동으로 저장돼요.");
+    (isDiary(draft) ? inputs.text : inputs.title).focus();
+    changed();
+  }));
+  function syncFoot() { $("#delete").hidden = !created || readOnly; $("#add-same").hidden = !created || readOnly; }
+  function paintCover(src) {
+    const img = $("#cover-img");
+    $("#cover-pick").classList.toggle("filled", !!src);
+    $("#cover-empty").hidden = !!src;
+    img.hidden = !src;
+    if (src) img.src = src; else img.removeAttribute("src");
+  }
+
+  function changed() {
+    if (readOnly) return;
+    if (!created) {
+      if (!(draft.title || "").trim() && !(isDiary(draft) && (draft.text || "").trim()) && !draft.cover && !draft.coverData) return;
+      created = true; syncFoot();
+    }
+    dirty = true;
+    setStatus("저장 중…");
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(flush, 600);
+  }
+  function flush() {
+    clearTimeout(saveTimer);
+    if (!dirty || !created) return chain;
+    dirty = false;
+    const snap = { ...draft, quotes: draft.quotes.map((q) => ({ ...q })) };
+    if (!snap.createdAt) draft.createdAt = snap.createdAt = new Date().toISOString();
+    chain = chain
+      .then(() => store.save(snap))
+      .then(() => { if (draft && draft.id === snap.id && !dirty) setStatus("저장됨"); })
+      .catch((e) => { dirty = true; setStatus((e && e.code === "quota_exceeded") ? "저장 공간이 가득 찼어요." : "저장하지 못했어요. 다시 고치면 다시 저장해요.", true); });
+    return chain;
+  }
+
+  Object.entries(inputs).forEach(([k, el]) => {
+    el.addEventListener("input", () => {
+      draft[k] = k === "pages" ? (el.value ? Math.max(0, parseInt(el.value, 10) || 0) : "") : el.value;
+      if (el.tagName === "TEXTAREA") size(el);
+      if (k === "date" && !el.value) return;
+      changed();
+    });
+  });
+  function size(el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
+  function sizeAll() {
+    ["reason", "review", "text"].forEach((k) => size(inputs[k]));
+    document.querySelectorAll("#quotes textarea").forEach(size);
+  }
+
+  /* Quotes: page number + sentence, as many as needed */
+  function paintQuotes() {
+    if (!draft.quotes.length) draft.quotes.push({ page: "", text: "" });
+    const box = $("#quotes");
+    box.textContent = "";
+    draft.quotes.forEach((q, i) => {
+      const row = document.createElement("div");
+      row.className = "quote-row field";
+      const page = document.createElement("input");
+      page.className = "q-page"; page.placeholder = "p."; page.inputMode = "numeric";
+      page.value = q.page; page.setAttribute("aria-label", `문장 ${i + 1} 페이지`);
+      const text = document.createElement("textarea");
+      text.className = "q-text"; text.rows = 1; text.placeholder = "문장";
+      text.value = q.text; text.setAttribute("aria-label", `문장 ${i + 1}`);
+      const del = document.createElement("button");
+      del.type = "button"; del.className = "q-del"; del.textContent = "×";
+      del.setAttribute("aria-label", `문장 ${i + 1} 지우기`);
+      page.addEventListener("input", () => { q.page = page.value; changed(); });
+      text.addEventListener("input", () => { q.text = text.value; size(text); changed(); });
+      del.addEventListener("click", () => { draft.quotes.splice(i, 1); paintQuotes(); sizeAll(); changed(); });
+      page.readOnly = text.readOnly = readOnly;
+      row.append(page, text, del);
+      box.appendChild(row);
+    });
+  }
+  $("#add-quote").addEventListener("click", () => {
+    draft.quotes.push({ page: "", text: "" });
+    paintQuotes(); sizeAll();
+    const rows = document.querySelectorAll("#quotes .q-page");
+    rows[rows.length - 1].focus();
+  });
+
+  /* Cover: click, or drop an image on it */
+  const pick = $("#cover-pick"), file = $("#f-cover");
+  pick.addEventListener("click", () => file.click());
+  file.addEventListener("change", () => { if (file.files[0]) takeCover(file.files[0]); file.value = ""; });
+  pick.addEventListener("dragover", (e) => { e.preventDefault(); pick.classList.add("drag"); });
+  pick.addEventListener("dragleave", () => pick.classList.remove("drag"));
+  pick.addEventListener("drop", (e) => {
+    e.preventDefault(); pick.classList.remove("drag");
+    const f = [...(e.dataTransfer?.files || [])].find((f) => f.type.startsWith("image/"));
+    if (f) takeCover(f);
+  });
+  async function takeCover(f) {
+    if (!f.type.startsWith("image/")) { setStatus("이미지 파일을 골라 주세요.", true); return; }
+    const forId = draft.id;
+    setStatus("표지 올리는 중…");
+    try {
+      const small = await shrink(f, 600);
+      const r = await store.putCover(small);
+      if (!draft || draft.id !== forId) { if (r.cover) store.dropCover(r.cover); return; }
+      const old = draft.cover;
+      if (r.cover) { draft.cover = r.cover; delete draft.coverData; }
+      else { draft.coverData = r.coverData; delete draft.cover; }
+      paintCover(r.url);
+      changed();
+      await flush();
+      if (old && old !== draft.cover) store.dropCover(old);
+    } catch (e) {
+      setStatus(e && e.code === "too_large" ? "이미지가 너무 커요. 더 작은 파일을 골라 주세요." : "표지를 올리지 못했어요. 다시 시도해 주세요.", true);
+    }
+  }
+
+  /* Delete asks twice, inside the sheet */
+  let armTimer = null;
+  const del = $("#delete");
+  function disarmDelete() { clearTimeout(armTimer); del.classList.remove("armed"); del.textContent = "삭제"; }
+  del.addEventListener("click", async () => {
+    if (!del.classList.contains("armed")) {
+      del.classList.add("armed"); del.textContent = "한 번 더 누르면 삭제돼요";
+      armTimer = setTimeout(disarmDelete, 3500);
+      return;
+    }
+    disarmDelete();
+    clearTimeout(saveTimer); dirty = false;
+    const b = draft;
+    try { await chain; await store.remove(b); draft = null; sheet.close(); }
+    catch { setStatus("삭제하지 못했어요. 다시 시도해 주세요.", true); }
+  });
+
+  $("#add-same").addEventListener("click", async () => { const date = draft.date; await flush(); openBook(null, date); });
+
+  function closeSheet() {
+    if (readOnly) { sheet.close(); return; }
+    if (draft && !created && draft.cover) store.dropCover(draft.cover);
+    else flush();
+    sheet.close();
+  }
+  $("#close").addEventListener("click", closeSheet);
+  sheet.addEventListener("cancel", (e) => { e.preventDefault(); closeSheet(); });
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) closeSheet(); });
+  sheet.addEventListener("close", () => {
+    if (draft && draft.date && created && screen === "month") {
+      const [y, m] = draft.date.split("-").map(Number);
+      if (y && m && (y !== view.y || m - 1 !== view.m)) { view.y = y; view.m = m - 1; renderAll(); }
+    }
+    draft = null;
+  });
+  $("#form").addEventListener("submit", (e) => e.preventDefault());
+
+  /* ── Month sheet for printing: an A4 PDF in the same index style ── */
+  let jspdfLoading = null;
+  function loadJsPDF() {
+    if (window.jspdf) return Promise.resolve(window.jspdf);
+    if (!jspdfLoading) {
+      jspdfLoading = new Promise((res, rej) => {
+        const s = document.createElement("script");
+        s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+        s.onload = () => (window.jspdf ? res(window.jspdf) : rej(new Error("jspdf")));
+        s.onerror = () => { jspdfLoading = null; rej(new Error("jspdf")); };
+        document.head.appendChild(s);
+      });
+    }
+    return jspdfLoading;
+  }
+  function wrapLines(g, text, maxW, maxLines) {
+    const lines = []; let cur = "";
+    for (const ch of text) {
+      if (g.measureText(cur + ch).width > maxW && cur) { lines.push(cur); cur = ch.trim() ? ch : ""; }
+      else cur += ch;
+    }
+    if (cur) lines.push(cur);
+    if (lines.length > maxLines) { lines.length = maxLines; lines[maxLines - 1] = lines[maxLines - 1].slice(0, -1) + "…"; }
+    return lines;
+  }
+  async function drawMonth() {
+    try { await document.fonts.ready; } catch {}
+    const W = 1240, H = 1754, M = 84, GAP = 12;
+    const F = getComputedStyle(document.body).fontFamily;
+    const C = { ink: "#111111", muted: "#727272", soft: "#D9D9D7", red: "#E5332A" };
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const g = c.getContext("2d");
+    g.fillStyle = "#FFFFFF"; g.fillRect(0, 0, W, H);
+
+    const { y, m } = view;
+    const first = new Date(y, m, 1).getDay();
+    const days = new Date(y, m + 1, 0).getDate();
+    const rows = Math.ceil((first + days) / 7);
+    const list = booksIn(y, m);
+    const byDay = {}; list.forEach((b) => (byDay[b.date] = byDay[b.date] || []).push(b));
+
+    g.textBaseline = "alphabetic"; g.fillStyle = C.ink;
+    g.font = `500 150px ${F}`;
+    g.fillText(MON[m], M - 6, M + 150);
+
+    const cw = (W - 2 * M - GAP * 6) / 7;
+    const top = M + 250, numH = 34, rowGap = 18;
+    let ch = cw * 1.5;
+    const avail = H - M - (top - 30);
+    if (rows * (ch + numH) + (rows - 1) * rowGap > avail) ch = (avail - (rows - 1) * rowGap) / rows - numH;
+
+    const gridTop = top - 30;
+    for (let i = 0; i < rows * 7; i++) {
+      const d = i - first + 1;
+      if (d < 1 || d > days) continue;
+      const x = M + (i % 7) * (cw + GAP), ty = gridTop + Math.floor(i / 7) * (ch + numH + rowGap);
+      g.font = `500 26px ${F}`;
+      g.fillStyle = i % 7 === 0 ? C.red : C.ink;
+      g.fillText(pad(d), x, ty + 24);
+      const sy = ty + numH;
+      g.fillStyle = C.soft; g.fillRect(x, sy, cw, 1.5);
+      const dayBooks = (byDay[keyOf(y, m, d)] || []).slice(0, 3);
+      const bw = dayBooks.length ? (cw - (dayBooks.length - 1) * 3) / dayBooks.length : 0;
+      for (let k = 0; k < dayBooks.length; k++) {
+        const b = dayBooks[k], bx = x + k * (bw + 3);
+        const img = await loadImg(coverSrc(b));
+        if (img) {
+          const sc = Math.max(bw / img.naturalWidth, ch / img.naturalHeight);
+          const sw = bw / sc, sh = ch / sc;
+          g.drawImage(img, (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) / 2, sw, sh, bx, sy, bw, ch);
+        } else if (b.kind === "diary") {
+          g.strokeStyle = C.soft; g.lineWidth = 1.5; g.strokeRect(bx, sy, bw, ch);
+          g.fillStyle = C.ink; g.font = `400 16px ${F}`;
+          wrapLines(g, (b.text || "").trim() || "일기", bw - 14, 8).forEach((ln, j) => g.fillText(ln, bx + 7, sy + 24 + j * 22));
+        } else {
+          g.fillStyle = C.ink; g.fillRect(bx, sy, bw, ch);
+          g.fillStyle = "#FFFFFF"; g.font = `500 17px ${F}`;
+          const lines = wrapLines(g, b.title || "제목 없음", bw - 14, 4);
+          lines.forEach((ln, j) => g.fillText(ln, bx + 7, sy + ch - 10 - (lines.length - 1 - j) * 22));
+        }
+      }
+    }
+    return c;
+  }
+
+  const exportDlg = $("#export");
+  $("#export-close").addEventListener("click", () => exportDlg.close());
+  exportDlg.addEventListener("click", (e) => { if (e.target === exportDlg) exportDlg.close(); });
+  function showImage(canvas) { $("#export-img").src = canvas.toDataURL("image/png"); exportDlg.showModal(); }
+
+  $("#print").addEventListener("click", async () => {
+    const btn = $("#print"), label = btn.textContent;
+    btn.disabled = true; btn.textContent = "만드는 중…";
+    try {
+      const canvas = await drawMonth();
+      const name = `독서기록-${view.y}-${pad(view.m + 1)}`;
+      let downloads = null;
+      try { downloads = window.claude && window.claude.use ? await window.claude.use("downloads") : null; } catch {}
+      if (!downloads) { showImage(canvas); return; }
+      let data, filename;
+      try {
+        const { jsPDF } = await loadJsPDF();
+        const pdf = new jsPDF({ unit: "mm", format: "a4" });
+        pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, 210, 297);
+        data = pdf.output("blob"); filename = name + ".pdf";
+      } catch {
+        data = await new Promise((r) => canvas.toBlob(r, "image/png")); filename = name + ".png";
+      }
+      try { await downloads.save({ filename, data }); }
+      catch (e) { if (!e || e.code !== "declined") showImage(canvas); }
+    } catch {
+      btn.textContent = "다시 눌러 주세요";
+      setTimeout(() => { btn.textContent = label; }, 2500);
+      return;
+    } finally { btn.disabled = false; if (btn.textContent === "만드는 중…") btn.textContent = label; }
+  });
+
+  /* ── Join: a name and a round profile picture, kept on the person's shelf document ── */
+  const joinDlg = $("#join");
+  let joinAvatar = "", joinEditing = false;
+  function squareAvatar(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        const c = document.createElement("canvas"); c.width = c.height = 200;
+        const g = c.getContext("2d");
+        g.fillStyle = "#fff"; g.fillRect(0, 0, 200, 200);
+        g.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 200, 200);
+        URL.revokeObjectURL(url);
+        resolve(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image")); };
+      img.src = url;
+    });
+  }
+  function syncJoin() {
+    const has = !!joinAvatar;
+    $("#avatar-pick").classList.toggle("filled", has);
+    $("#avatar-empty").hidden = has;
+    $("#avatar-img").hidden = !has;
+    if (has) $("#avatar-img").src = joinAvatar;
+    $("#join-save").disabled = !(has && $("#f-nick").value.trim());
+  }
+  function openJoin(editing) {
+    joinEditing = editing;
+    const p = profiles[me] || {};
+    joinAvatar = p.avatarData || "";
+    $("#f-nick").value = p.nickname || "";
+    $("#join-title").textContent = editing ? "내 프로필" : "책장 만들기";
+    $("#join-sub").textContent = editing ? "친구들에게 보이는 이름과 이미지예요." : "이름과 프로필 이미지를 정하면 친구들이 내 책장을 알아볼 수 있어요.";
+    $("#join-save").textContent = editing ? "저장" : "시작하기";
+    $("#join-status").textContent = "";
+    syncJoin();
+    if (!joinDlg.open) joinDlg.showModal();
+  }
+  $("#avatar-pick").addEventListener("click", () => $("#f-avatar").click());
+  $("#f-avatar").addEventListener("change", async () => {
+    const f = $("#f-avatar").files[0]; $("#f-avatar").value = "";
+    if (!f) return;
+    try { joinAvatar = await squareAvatar(f); syncJoin(); }
+    catch { $("#join-status").textContent = "이미지를 읽지 못했어요. 다른 파일을 골라 주세요."; }
+  });
+  $("#f-nick").addEventListener("input", syncJoin);
+  joinDlg.addEventListener("cancel", (e) => { if (!joinEditing) e.preventDefault(); });
+  joinDlg.addEventListener("click", (e) => { if (e.target === joinDlg && joinEditing) joinDlg.close(); });
+  $("#join-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("#join-save"); btn.disabled = true;
+    const nickname = $("#f-nick").value.trim().slice(0, 20);
+    try {
+      const ref = dbRef.doc("shelves/" + me);
+      const cur = await ref.get();
+      const prev = cur.exists ? cur.data() : {};
+      await ref.set({ ...prev, since: prev.since || new Date().toISOString(), nickname, avatarData: joinAvatar });
+      profiles[me] = { nickname, avatarData: joinAvatar };
+      renderPresence();
+      const first = !joinEditing;
+      joinDlg.close();
+      renderAll();
+      if (first) startGuide();
+    } catch {
+      $("#join-status").textContent = "저장하지 못했어요. 이 페이지에 기록할 권한이 있는지 확인해 주세요.";
+      joinEditing = true; // let them close it and look around
+      btn.disabled = false;
+    }
+  });
+
+  /* ── First-run guide, shown once right after making a shelf ── */
+  const GUIDE = [
+    { el: () => $("#grid .day.today .slot") || $("#grid .day:not(.pad) .slot"), title: "날짜를 눌러 기록해요",
+      text: "그날 다 읽은 책을 남기거나, 책이 아니어도 사진·그림과 짧은 글로 일기를 쓸 수 있어요. 기록 창 위에서 책과 일기를 골라요." },
+    { el: () => $("#to-shelf"), title: "책등으로 모아 봐요",
+      text: "다 읽은 책이 쪽수만큼 두껍게, 표지 색으로 꽂혀요. 먼슬리를 누르면 달력으로 돌아와요." },
+    { el: () => $("#to-friends"), title: "친구 책장 보기",
+      text: "프로필을 누르면 친구들이 펼쳐져요. 친구를 누르면 그 친구의 먼슬리와 책등을 볼 수 있어요. 지금 보는 사람에게는 흰 원이 둘러져요." },
+    { el: () => $("#to-friends .av.mine") || $("#to-friends"), title: "프로필과 문장 모음",
+      text: "프로필에 마우스를 올리면 '프로필 보기'가 떠요. 휴대폰에서는 지금 보는 사람을 한 번 더 누르면 돼요. 사진과 이름을 바꾸고, 기록한 문장을 모아 볼 수 있어요." },
+  ];
+  let guideAt = 0;
+  function startGuide() {
+    profileOpen = false; picking = false;
+    const t = new Date(); view.y = t.getFullYear(); view.m = t.getMonth();
+    if (friend) openFriend(null);
+    setScreen("month");
+    guideAt = 0; $("#guide").hidden = false;
+    setTimeout(paintGuide, 60);
+  }
+  function paintGuide() {
+    const g = GUIDE[guideAt], el = g.el();
+    $("#guide-title").textContent = g.title;
+    $("#guide-text").textContent = g.text;
+    $("#guide-step").textContent = `${guideAt + 1} / ${GUIDE.length}`;
+    $("#guide-next").textContent = guideAt === GUIDE.length - 1 ? "시작하기" : "다음";
+    const hole = $("#guide-hole"), card = $("#guide-card");
+    if (!el) { hole.style.width = hole.style.height = "0px"; card.style.top = "40%"; card.style.bottom = ""; return; }
+    if (el.closest(".grid")) el.scrollIntoView({ block: "center" });
+    const r = el.getBoundingClientRect(), padPx = 6;
+    const inBar = !!el.closest(".switch");
+    Object.assign(hole.style, {
+      left: r.left - padPx + "px", top: r.top - padPx + "px",
+      width: r.width + padPx * 2 + "px", height: r.height + padPx * 2 + "px",
+      borderRadius: inBar ? "999px" : "4px",
+    });
+    // card on the roomier side of the spotlight
+    if (r.top + r.height / 2 > window.innerHeight / 2) { card.style.top = ""; card.style.bottom = window.innerHeight - r.top + padPx + 14 + "px"; }
+    else { card.style.bottom = ""; card.style.top = r.bottom + padPx + 14 + "px"; }
+    $("#guide-next").focus();
+  }
+  function endGuide() { $("#guide").hidden = true; }
+  $("#guide-next").addEventListener("click", () => { if (guideAt < GUIDE.length - 1) { guideAt++; paintGuide(); } else endGuide(); });
+  $("#guide-skip").addEventListener("click", endGuide);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#guide").hidden) endGuide(); });
+  window.addEventListener("resize", () => { if (!$("#guide").hidden) paintGuide(); });
+
+  /* Books saved before shelves existed sit in "books"; the owner moves them onto their own shelf once. */
+  async function migrateLegacy(db) {
+    try {
+      if (!userApi || !(await userApi.isOwner())) return;
+      const old = await db.collection("books").get();
+      for (const d of old.docs) {
+        await store.save({ id: d.id, ...d.data() });
+        await db.doc("books/" + d.id).delete();
+      }
+    } catch {}
+  }
+
+  /* ── Start ── */
+  function notice(text) { const n = $("#notice"); n.textContent = text; n.hidden = !text; }
+  function watchShelves(db, onFirst) {
+    let first = true;
+    db.collection("shelves").onSnapshot((snap) => {
+      members = snap.docs.map((d) => d.id);
+      profiles = {};
+      snap.docs.forEach((d) => { const v = d.data() || {}; profiles[d.id] = { nickname: v.nickname || "", avatarData: v.avatarData || "" }; });
+      if (first && !snap.metadata.fromCache) { first = false; if (onFirst) onFirst(); }
+      resolveNames(members.filter((id) => id !== me && !(id in names)));
+      if (viewerOnly && !friend && friendIds().length) { openFriend(friendIds()[0]); return; }
+      renderAll();
+    }, () => {});
+  }
+  setScreen(screen);
+  (async () => {
+    const hasClaude = !!(window.claude && window.claude.use);
+    let db = null, assets = null, canWrite = null;
+    try { db = hasClaude ? await window.claude.use("db") : null; } catch { db = null; }
+    if (db) {
+      try { userApi = await window.claude.use("user"); } catch { userApi = null; }
+      try { me = userApi ? await userApi.id() : null; } catch { me = null; }
+      try { canWrite = userApi ? await userApi.can("data.write") : null; } catch { canWrite = null; }
+    }
+    if (db && me && canWrite !== false) {
+      dbRef = db;
+      try { assets = await window.claude.use("assets"); } catch { assets = null; }
+      store = dbStore(db, assets, me);
+      const fail = () => { $("#hint").hidden = false; $("#hint").textContent = "기록을 불러오지 못했어요. 새로 고쳐 주세요."; };
+      db.doc("shelves/" + me).collection("books").onSnapshot(
+        (snap) => { const next = {}; snap.docs.forEach((d) => { next[d.id] = { id: d.id, ...d.data() }; }); books = next; renderAll(); },
+        fail
+      );
+      watchShelves(db, () => {
+        if (!(profiles[me] && profiles[me].nickname && profiles[me].avatarData)) openJoin(false);
+        else if (window.claude.firstRun) { window.claude.firstRun = false; startGuide(); }
+      });
+      joinRoom();
+      $("#to-friends").hidden = false;
+      renderPresence();
+      migrateLegacy(db);
+    } else if (db) {
+      // Signed in, but this account may not write here: show everyone's shelves, read only.
+      dbRef = db; me = me || null; viewerOnly = true;
+      $("#to-friends").hidden = false;
+      notice("이 계정은 아직 책장을 만들 수 없어요. 책장 주인에게 이메일로 '편집자' 초대를 받으면 내 책장을 만들 수 있어요. 지금은 다른 사람 책장만 볼 수 있어요.");
+      watchShelves(db);
+      joinRoom();
+      picking = true;
+      setScreen(screen);
+    } else if (hasClaude) {
+      $("#to-month").hidden = true; $("#to-shelf").hidden = true;
+      $("#view-month").hidden = true;
+      notice("Claude에 로그인하고 초대받은 계정으로 열어야 책장을 볼 수 있어요.");
+    } else {
+      store = localStore();
+      books = loadLocal();
+    }
+    renderAll();
+  })();
+})();
+</script>
+
+</body>
+</html>
