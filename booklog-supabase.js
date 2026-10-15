@@ -38,6 +38,11 @@
     return snap(data.map((r) => docOf(r.id, shelfOut(r))));
   }
   async function booksOf(owner) {
+    if (owner !== uid) {
+      // Someone else's records come through friend_books, which leaves locked ones as a picture only
+      const { data, error } = await sb.rpc("friend_books", { target: owner });
+      if (!error) return snap((data || []).map((r) => docOf(r.id, r.data)));
+    }
     const { data, error } = await sb.from("books").select("id,data").eq("owner", owner);
     if (error) throw error;
     return snap(data.map((r) => docOf(r.id, r.data)));
@@ -45,7 +50,10 @@
 
   function booksCollection(owner) {
     return {
-      onSnapshot: (cb, err) => watch("books", `owner=eq.${owner}`, () => booksOf(owner), cb, err),
+      // A friend's books are not readable directly; their shelf row is touched whenever they change
+      onSnapshot: (cb, err) => (owner === uid
+        ? watch("books", `owner=eq.${owner}`, () => booksOf(owner), cb, err)
+        : watch("shelves", `id=eq.${owner}`, () => booksOf(owner), cb, err)),
       get: () => booksOf(owner),
       doc: (id) => ({
         async set(body) {

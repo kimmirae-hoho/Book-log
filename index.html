@@ -347,6 +347,16 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
 .notes { display: grid; gap: 18px; }
 /* Book or diary: one sheet, two sets of fields */
 .sheet-top { gap: 12px; }
+.lock { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--soft); }
+.lock[aria-pressed="true"] { color: var(--surface); background: var(--ink); border-color: var(--ink); }
+.lock[data-tip]::after { bottom: auto; top: calc(100% + 8px); }
+.readonly .lock { display: none; }
+.cover-btn .lockmark {
+  position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; border-radius: 50%;
+  background: rgba(0, 0, 0, .55); color: #fff; display: grid; place-items: center;
+}
+.cover-btn .plain.locked { background: var(--soft); color: var(--muted); align-items: center; justify-content: center; }
+.sentence .m .lk { color: var(--muted); }
 .kind { display: flex; gap: 2px; margin-left: auto; background: var(--bg); border-radius: 999px; padding: 2px; }
 .kind button { font-size: 12px; padding: 4px 12px; border-radius: 999px; color: var(--muted); }
 .kind button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
@@ -490,6 +500,10 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
         <button type="button" data-k="book" aria-pressed="true">책</button>
         <button type="button" data-k="diary" aria-pressed="false">일기</button>
       </div>
+      <button type="button" class="lock" id="lock" aria-pressed="false" data-tip="잠그면 친구에게 이미지만 보여요">
+        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span>잠금</span>
+      </button>
       <button type="button" class="close" id="close" aria-label="닫기">×</button>
     </div>
 
@@ -583,7 +597,7 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
   const todayKey = () => { const t = new Date(); return keyOf(t.getFullYear(), t.getMonth(), t.getDate()); };
   const newId = () => "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   const fmt = (n) => n.toLocaleString("ko-KR");
-  const FIELDS = ["kind", "text", "date", "title", "author", "publisher", "pages", "reason", "quotes", "review", "rating", "cover", "coverData"];
+  const FIELDS = ["kind", "text", "locked", "date", "title", "author", "publisher", "pages", "reason", "quotes", "review", "rating", "cover", "coverData"];
   const LOCAL_KEY = "monthly-booklog.books";
   const VIEW_KEY = "monthly-booklog.view";
 
@@ -793,18 +807,22 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
         const covers = document.createElement("div");
         covers.className = "covers";
         dayBooks.slice(0, 3).forEach((b) => {
-          const btn = document.createElement(others ? "div" : "button");
-          btn.className = "cover-btn" + (others ? " static" : "");
-          btn.setAttribute("aria-label", `${m + 1}월 ${d}일, ${b.kind === "diary" ? "일기" : b.title || "제목 없는 책"}`);
-          if (others) btn.setAttribute("role", "img");
+          // Friends can open what is not locked; a locked record shows its picture only
+          const shut = others && b.locked;
+          const btn = document.createElement(shut ? "div" : "button");
+          btn.className = "cover-btn" + (shut ? " static" : "");
+          btn.setAttribute("aria-label", shut ? `${m + 1}월 ${d}일, 잠긴 기록` : `${m + 1}월 ${d}일, ${b.kind === "diary" ? "일기" : b.title || "제목 없는 책"}`);
+          if (shut) btn.setAttribute("role", "img");
           const src = coverSrc(b);
           if (src) {
             const img = document.createElement("img");
             img.src = src; img.alt = ""; img.loading = "lazy";
-            img.onerror = () => img.replaceWith(plain(b));
+            img.onerror = () => img.replaceWith(plain(b, others));
             btn.appendChild(img);
-          } else btn.appendChild(plain(b));
+          } else btn.appendChild(plain(b, others));
+          if (b.locked && !others) { const lm = document.createElement("span"); lm.className = "lockmark"; lm.innerHTML = LOCK_SVG; btn.appendChild(lm); }
           if (!others) btn.addEventListener("click", () => openBook(b.id));
+          else if (!shut) btn.addEventListener("click", () => openBook(b.id, null, friendBooks));
           covers.appendChild(btn);
         });
         slot.appendChild(covers);
@@ -818,12 +836,15 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
       grid.appendChild(cell);
     }
   }
-  function plain(b) {
+  function plain(b, others) {
     const s = document.createElement("span");
+    if (others && b.locked) { s.className = "plain locked"; s.innerHTML = LOCK_SVG; return s; }
     if (b.kind === "diary") { s.className = "plain note"; s.textContent = (b.text || "").trim() || "일기"; return s; }
     s.className = "plain"; s.textContent = b.title || "제목 없음";
     return s;
   }
+
+  const LOCK_SVG = '<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
 
   /* ── Shelf: one shelf per month, newest month on top ── */
   function spineWidth(b) {
@@ -1071,7 +1092,7 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
     if (!mine) $("#p-status").textContent = "";
     const src = mine ? books : friendBooks;
     const list = [];
-    Object.values(src).filter((b) => b.kind !== "diary").sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0))
+    Object.values(src).filter((b) => b.kind !== "diary" && (mine || !b.locked)).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0))
       .forEach((b) => quotesOf(b).forEach((q) => { if ((q.text || "").trim()) list.push({ b, q }); }));
     $("#p-count").textContent = `기록한 문장 ${list.length}`;
     const box = $("#p-sentences");
@@ -1090,8 +1111,9 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
       [b.author, q.page ? `p.${q.page}` : "", (b.date || "").replace(/-/g, ".")].filter(Boolean).forEach((x) => {
         const sp = document.createElement("span"); sp.textContent = x; m.appendChild(sp);
       });
+      if (mine && b.locked) { const lk = document.createElement("span"); lk.className = "lk"; lk.textContent = "잠금 · 친구에게 안 보여요"; m.appendChild(lk); }
       it.append(t, m);
-      if (mine) it.addEventListener("click", () => openBook(b.id)); else it.disabled = true;
+      it.addEventListener("click", () => (mine ? openBook(b.id) : openBook(b.id, null, friendBooks)));
       box.appendChild(it);
     });
   }
@@ -1186,7 +1208,16 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
     else sheet.focus();
   }
   const isDiary = (b) => b && b.kind === "diary";
+  function paintLock() { $("#lock").setAttribute("aria-pressed", !!(draft && draft.locked)); }
+  $("#lock").addEventListener("click", () => {
+    if (readOnly || !draft) return;
+    if (draft.locked) delete draft.locked; else draft.locked = true;
+    paintLock();
+    if (created) setStatus(draft.locked ? "잠갔어요. 친구에게는 이미지만 보여요." : "잠금을 풀었어요.");
+    changed();
+  });
   function paintKind() {
+    paintLock();
     const d = isDiary(draft);
     $("#form").classList.toggle("is-diary", d);
     document.querySelectorAll(".kind button").forEach((b) => { b.setAttribute("aria-pressed", b.dataset.k === (d ? "diary" : "book")); b.disabled = readOnly; });
