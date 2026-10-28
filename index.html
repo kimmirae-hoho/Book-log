@@ -94,6 +94,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .pn-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1pt solid #111; padding-bottom: 2mm; margin-bottom: 5mm; }
 .pn-head h1 { margin: 0; font-size: 26pt; font-weight: 500; letter-spacing: -0.03em; line-height: 1; }
 .pn-head span { font-size: 8.5pt; }
+.pn-part + .pn-part { break-before: page; }
 .pn-cols { column-count: 2; column-fill: auto; column-gap: 12mm; column-rule: .3pt solid #ccc; }
 .pn-entry { padding-bottom: 4mm; margin-bottom: 4mm; border-bottom: .3pt solid #ccc; }
 .pn-top { display: grid; grid-template-columns: 20mm 1fr; gap: 4mm; align-items: start; }
@@ -1517,11 +1518,19 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
       root.textContent = "";
       const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
       const wrap = el("div", "pn");
-      const head = el("div", "pn-head");
-      head.append(el("h1", "", `${MON[view.m]} ${view.y}`), el("span", "", `${view.y}.${pad(view.m + 1)} · 기록 ${list.length}`));
-      const cols = el("div", "pn-cols");
+      // Books first; diaries start on their own page at the back.
+      const bookList = list.filter((b) => b.kind !== "diary"), diaryList = list.filter((b) => b.kind === "diary");
+      const section = (label, n) => {
+        const sec = el("section", "pn-part"), head = el("div", "pn-head");
+        head.append(el("h1", "", `${MON[view.m]} ${view.y}`), el("span", "", `${view.y}.${pad(view.m + 1)} · ${label} ${n}`));
+        const cols = el("div", "pn-cols");
+        sec.append(head, cols); wrap.appendChild(sec);
+        return cols;
+      };
+      const bookCols = bookList.length ? section("책 기록", bookList.length) : null;
+      const diaryCols = diaryList.length ? section("일기", diaryList.length) : null;
       const waits = [];
-      list.forEach((b) => {
+      [...bookList, ...diaryList].forEach((b) => {
         const diary = b.kind === "diary";
         const e = el("article", "pn-entry " + (diary ? "pn-diary" : "pn-book"));
         const src = coverSrc(b);
@@ -1551,9 +1560,8 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
           }
           sec("감상평", b.review);
         }
-        cols.appendChild(e);
+        (diary ? diaryCols : bookCols).appendChild(e);
       });
-      wrap.append(head, cols);
       root.appendChild(wrap);
       await Promise.race([Promise.all(waits), new Promise((res) => setTimeout(res, 6000))]);
       const page = document.createElement("style");
