@@ -102,8 +102,9 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .pn p { orphans: 2; widows: 2; }
 .pn-top.noimg { grid-template-columns: 1fr; }
 .pn-top img { width: 20mm; aspect-ratio: 2 / 3; object-fit: cover; display: block; }
-.pn-diary .pn-top { grid-template-columns: 36mm 1fr; }
-.pn-diary .pn-top img { width: 36mm; aspect-ratio: auto; max-height: 48mm; object-fit: contain; object-position: left top; }
+/* one book record per column; diaries stack freely */
+.pn-book { break-before: column; break-after: column; border-bottom: 0; }
+.pn-book:first-child { break-before: auto; }
 .pn-date { font-size: 8pt; color: #666; font-variant-numeric: tabular-nums; }
 .pn-title { font-size: 12pt; font-weight: 700; letter-spacing: -0.01em; line-height: 1.3; margin: .5mm 0 1mm; }
 .pn-meta { font-size: 8.5pt; color: #444; }
@@ -1522,7 +1523,7 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
       const waits = [];
       list.forEach((b) => {
         const diary = b.kind === "diary";
-        const e = el("article", "pn-entry" + (diary ? " pn-diary" : ""));
+        const e = el("article", "pn-entry " + (diary ? "pn-diary" : "pn-book"));
         const src = coverSrc(b);
         const top = el("div", "pn-top" + (src ? "" : " noimg"));
         if (src) { const i = el("img"); i.src = src; i.alt = ""; waits.push(i.decode().catch(() => i.remove())); top.appendChild(i); }
