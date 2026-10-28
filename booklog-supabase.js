@@ -291,13 +291,27 @@
       });
       return;
     }
-    const { data } = await sb.auth.getSession();
-    const id = data.session && data.session.user.id;
-    if (id) {
-      const { data: mine } = await sb.from("shelves").select("id").eq("id", id).maybeSingle();
-      if (mine) { uid = id; resolveReady(); return; }
-      await sb.auth.signOut();
-    }
-    if (document.body) showGate(); else document.addEventListener("DOMContentLoaded", showGate);
+    // When the server cannot be reached, say so plainly instead of leaving an empty page that ignores clicks
+    const down = () => {
+      const show = () => {
+        const st = document.createElement("style"); st.textContent = css; document.head.appendChild(st);
+        const g = document.createElement("div"); g.className = "gate";
+        g.innerHTML = '<form><h1>BOOKLOG</h1><p>지금 기록 저장소에 연결할 수 없어요.<br>잠시 뒤 다시 열어 주세요.</p><button type="button" class="go">다시 시도</button></form>';
+        g.querySelector(".go").addEventListener("click", () => location.reload());
+        document.body.appendChild(g);
+      };
+      if (document.body) show(); else document.addEventListener("DOMContentLoaded", show);
+    };
+    try {
+      const { data } = await sb.auth.getSession();
+      const id = data.session && data.session.user.id;
+      if (id) {
+        const { data: mine, error } = await sb.from("shelves").select("id").eq("id", id).maybeSingle();
+        if (error) { down(); return; }   // a network failure is not a missing shelf: keep them signed in
+        if (mine) { uid = id; resolveReady(); return; }
+        await sb.auth.signOut();
+      }
+      if (document.body) showGate(); else document.addEventListener("DOMContentLoaded", showGate);
+    } catch { down(); }
   })();
 })();
