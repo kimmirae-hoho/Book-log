@@ -81,6 +81,38 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .print { font-size: 12px; line-height: 1; padding-top: 2px; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
 .print:hover { color: var(--red); }
 .print:disabled { opacity: .5; cursor: progress; }
+.prints { display: flex; gap: 14px; }
+
+/* Written records for print: A4 landscape, two columns. Only shown while printing them. */
+#print-notes-root { display: none; }
+@media print {
+  html.printing-notes body > *:not(#print-notes-root) { display: none !important; }
+  html.printing-notes #print-notes-root { display: block; }
+  html.printing-notes body { padding: 0; background: #fff; }
+}
+.pn { color: #111; font-family: var(--f); font-size: 9.5pt; line-height: 1.55; }
+.pn-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1pt solid #111; padding-bottom: 2mm; margin-bottom: 5mm; }
+.pn-head h1 { margin: 0; font-size: 26pt; font-weight: 500; letter-spacing: -0.03em; line-height: 1; }
+.pn-head span { font-size: 8.5pt; }
+.pn-cols { column-count: 2; column-fill: auto; column-gap: 12mm; column-rule: .3pt solid #ccc; }
+.pn-entry { padding-bottom: 4mm; margin-bottom: 4mm; border-bottom: .3pt solid #ccc; }
+.pn-top { display: grid; grid-template-columns: 20mm 1fr; gap: 4mm; align-items: start; }
+.pn-top, .pn-q { break-inside: avoid; }
+.pn-top, .pn-sec b { break-after: avoid; }
+.pn p { orphans: 2; widows: 2; }
+.pn-top.noimg { grid-template-columns: 1fr; }
+.pn-top img { width: 20mm; aspect-ratio: 2 / 3; object-fit: cover; display: block; }
+.pn-diary .pn-top { grid-template-columns: 36mm 1fr; }
+.pn-diary .pn-top img { width: 36mm; aspect-ratio: auto; max-height: 48mm; object-fit: contain; object-position: left top; }
+.pn-date { font-size: 8pt; color: #666; font-variant-numeric: tabular-nums; }
+.pn-title { font-size: 12pt; font-weight: 700; letter-spacing: -0.01em; line-height: 1.3; margin: .5mm 0 1mm; }
+.pn-meta { font-size: 8.5pt; color: #444; }
+.pn-stars { font-size: 9pt; letter-spacing: 1pt; color: #E5332A; }
+.pn-sec { margin-top: 2.5mm; }
+.pn-sec b { display: block; font-size: 7.5pt; font-weight: 500; color: #777; letter-spacing: .04em; margin-bottom: .5mm; }
+.pn-sec p { margin: 0; white-space: pre-wrap; }
+.pn-q { display: grid; grid-template-columns: 9mm 1fr; gap: 1mm; margin-bottom: 1mm; }
+.pn-q span { color: #777; font-size: 8pt; font-variant-numeric: tabular-nums; }
 
 /* ── Month index ── */
 .weekdays, .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); column-gap: 8px; }
@@ -423,7 +455,10 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
       <div class="titlerow">
         <h1 id="month" class="num-t">OCT</h1>
         <div class="side">
-        <button id="print" class="print">인쇄용 저장</button>
+        <div class="prints">
+          <button id="print" class="print">달력 인쇄</button>
+          <button id="print-notes" class="print">기록 인쇄</button>
+        </div>
         <nav class="nav" aria-label="달 이동">
           <button id="prev" class="arrow" aria-label="이전 달">←</button>
           <button id="today">이번 달</button>
@@ -1469,6 +1504,67 @@ dialog::backdrop { background: rgba(10, 10, 10, .45); }
   $("#export-close").addEventListener("click", () => exportDlg.close());
   exportDlg.addEventListener("click", (e) => { if (e.target === exportDlg) exportDlg.close(); });
   function showImage(canvas) { $("#export-img").src = canvas.toDataURL("image/png"); exportDlg.showModal(); }
+
+  /* ── Print the month's written records: A4 landscape, two columns ── */
+  $("#print-notes").addEventListener("click", async () => {
+    const btn = $("#print-notes"), label = btn.textContent;
+    const list = booksIn(view.y, view.m, books);
+    if (!list.length) { btn.textContent = "이번 달 기록이 없어요"; setTimeout(() => { btn.textContent = label; }, 2200); return; }
+    btn.disabled = true; btn.textContent = "만드는 중…";
+    try {
+      const root = $("#print-notes-root") || document.body.appendChild(Object.assign(document.createElement("div"), { id: "print-notes-root" }));
+      root.textContent = "";
+      const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+      const wrap = el("div", "pn");
+      const head = el("div", "pn-head");
+      head.append(el("h1", "", `${MON[view.m]} ${view.y}`), el("span", "", `${view.y}.${pad(view.m + 1)} · 기록 ${list.length}`));
+      const cols = el("div", "pn-cols");
+      const waits = [];
+      list.forEach((b) => {
+        const diary = b.kind === "diary";
+        const e = el("article", "pn-entry" + (diary ? " pn-diary" : ""));
+        const src = coverSrc(b);
+        const top = el("div", "pn-top" + (src ? "" : " noimg"));
+        if (src) { const i = el("img"); i.src = src; i.alt = ""; waits.push(i.decode().catch(() => i.remove())); top.appendChild(i); }
+        const info = el("div");
+        info.appendChild(el("div", "pn-date", (b.date || "").replace(/-/g, ".") + (diary ? " · 일기" : "")));
+        if (diary) {
+          if ((b.text || "").trim()) { const t = el("p"); t.style.margin = "1mm 0 0"; t.style.whiteSpace = "pre-wrap"; t.textContent = b.text.trim(); info.appendChild(t); }
+        } else {
+          info.appendChild(el("div", "pn-title", b.title || "제목 없음"));
+          const meta = [b.author, b.publisher, pagesOf(b) ? `${pagesOf(b)}쪽` : ""].filter(Boolean).join(" · ");
+          if (meta) info.appendChild(el("div", "pn-meta", meta));
+          if (b.rating) info.appendChild(el("div", "pn-stars", "★".repeat(b.rating) + "☆".repeat(5 - b.rating)));
+        }
+        top.appendChild(info);
+        e.appendChild(top);
+        if (!diary) {
+          const sec = (label, text) => { if (!(text || "").trim()) return; const d = el("div", "pn-sec"); d.append(el("b", "", label), el("p", "", text.trim())); e.appendChild(d); };
+          sec("이 책을 고른 이유", b.reason);
+          const qs = quotesOf(b).filter((q) => (q.text || "").trim());
+          if (qs.length) {
+            const d = el("div", "pn-sec"); d.appendChild(el("b", "", "기억하고 싶은 문장"));
+            qs.forEach((q) => { const row = el("div", "pn-q"); if (q.page) row.appendChild(el("span", "", `p.${q.page}`)); else row.style.display = "block";
+              row.appendChild(el("p", "", q.text.trim())); d.appendChild(row); });
+            e.appendChild(d);
+          }
+          sec("감상평", b.review);
+        }
+        cols.appendChild(e);
+      });
+      wrap.append(head, cols);
+      root.appendChild(wrap);
+      await Promise.race([Promise.all(waits), new Promise((res) => setTimeout(res, 6000))]);
+      const page = document.createElement("style");
+      page.textContent = "@page { size: A4 landscape; margin: 12mm 14mm; }";
+      document.head.appendChild(page);
+      document.documentElement.classList.add("printing-notes");
+      const done = () => { document.documentElement.classList.remove("printing-notes"); page.remove(); window.removeEventListener("afterprint", done); };
+      window.addEventListener("afterprint", done);
+      window.print();
+      setTimeout(done, 1000); // some browsers never fire afterprint; print() blocks until the dialog closes on most
+    } finally { btn.disabled = false; btn.textContent = label; }
+  });
 
   $("#print").addEventListener("click", async () => {
     const btn = $("#print"), label = btn.textContent;
